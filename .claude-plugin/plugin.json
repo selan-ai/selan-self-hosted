@@ -1,0 +1,13 @@
+{
+  "name": "selan-self-hosted",
+  "description": "Run Selan's proxy and MCP gateway on your own server, inside your VPN, with your keys in your own vault: on this machine with Docker, or on a server over SSH, using the same install.sh as Settings › Own servers.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Selan",
+    "url": "https://selan.ai"
+  },
+  "homepage": "https://selan.ai",
+  "repository": "https://github.com/selan-ai/selan-self-hosted",
+  "license": "MIT",
+  "keywords": ["selan", "self-hosted", "proxy", "vault", "openbao", "deploy"]
+}

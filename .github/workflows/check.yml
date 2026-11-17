@@ -1,0 +1,67 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n
+        run: |
+          for script in $(git ls-files '*.sh'); do
+            echo "bash -n $script"
+            bash -n "$script"
+          done
+
+      - name: shellcheck
+        run: shellcheck --version && git ls-files -z '*.sh' | xargs -0 shellcheck
+
+  compose:
+    runs-on: ubuntu-latest
+    env:
+      # compose.yaml refuses to start without a pinned proxy and gateway; these only satisfy `config`.
+      SELAN_PROXY_IMAGE: example.invalid/selan-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      SELAN_GATEWAY_IMAGE: example.invalid/selan-mcp-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: compose config, with OpenBao and with your own Vault
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example --profile openbao config --quiet
+          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway openbao proxy '
+
+      - name: Caddyfile, both TLS modes
+        run: |
+          for tls in internal files; do
+            docker run --rm -e SELAN_PROXY_HOST=gw.example.com -e SELAN_GATEWAY_HOST=mcp.example.com \
+              -e SELAN_TLS=$tls -e ALLOWED_CIDRS=private_ranges -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0 \
+              caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+          done
+
+      - name: every image pinned by digest, and every digest real
+        run: ci/check-pins.sh
+
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install.sh brings the stack up with OpenBao and a fake control
+        run: sudo -E bash ci/stack-test.sh
+
+      - name: logs
+        if: failure()
+        run: |
+          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
+          sudo -E docker compose --project-directory "$PWD" --profile openbao logs --tail 80

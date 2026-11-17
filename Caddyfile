@@ -1,0 +1,33 @@
+# TLS for the proxy and the gateway, on the VPN address compose publishes.
+# SELAN_TLS is `internal` (Caddy's own CA) or `files` (./certs/fullchain.pem and privkey.pem).
+{
+	auto_https disable_redirects
+	skip_install_trust
+	ocsp_stapling off
+}
+
+(tls-internal) {
+	tls internal
+}
+
+(tls-files) {
+	tls /certs/fullchain.pem /certs/privkey.pem
+}
+
+# A request from outside ALLOWED_CIDRS is refused here, even if the port is reached.
+(only-allowed) {
+	@outside not remote_ip {$ALLOWED_CIDRS}
+	respond @outside 403
+}
+
+{$SELAN_PROXY_HOST} {
+	import tls-{$SELAN_TLS}
+	import only-allowed
+	reverse_proxy proxy:8080
+}
+
+{$SELAN_GATEWAY_HOST} {
+	import tls-{$SELAN_TLS}
+	import only-allowed
+	reverse_proxy gateway:8080
+}
