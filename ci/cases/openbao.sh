@@ -1,43 +1,12 @@
 #!/usr/bin/env bash
-# Brings the stack up the way a server does, through install.sh, with OpenBao (its cosign signature
-# checked), stand-ins for the proxy, the gateway and selan-keys and a fake control, then checks it is
-# ready, registered with both public keys, and that only selan-keys reaches the vault.
-# Runs as root on Ubuntu or Debian, Docker installed by install.sh if missing: ci/dind-test.sh runs it in a
-# fresh Ubuntu container with its own Docker daemon. Answers every question install.sh has from the environment.
-set -euo pipefail
+# OpenBao on this server, registration tokens present, TLS from Caddy's own CA: install.sh brings the stack
+# up (checking OpenBao's cosign signature), it registers, only selan-keys reaches the vault, a re-run
+# changes nothing, a sealed vault after a restart is unsealed, by unseal.sh and by a re-run, and a wrong
+# signer is refused.
+# shellcheck source=../lib.sh
+. "$(dirname "$0")/../lib.sh"
 
-cd "$(dirname "$0")/.."
-root=$PWD
-fail() {
-  printf 'FAIL: %s\n' "$*" >&2
-  exit 1
-}
-pass() { printf 'ok: %s\n' "$*"; }
-
-stand_in=python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
-curl_image=curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
-caddy_image=""
-# Until a Caddy build is pinned, stock Caddy serves SELAN_TLS=internal; the compose job checks the build.
-if grep -qF "image: \${SELAN_CADDY_IMAGE:?" compose.yaml; then
-  caddy_image=caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
-  export SELAN_CADDY_IMAGE=$caddy_image
-fi
-export SELAN_PROXY_IMAGE=$stand_in SELAN_GATEWAY_IMAGE=$stand_in SELAN_KEYS_IMAGE=$stand_in
-# The stand-ins, and stock Caddy before ours is published, are not signed: everything else is checked.
-export SELAN_UNSIGNED_OK="$stand_in $caddy_image"
-export COMPOSE_FILE="$root/compose.yaml:$root/ci/compose.ci.yaml"
-export SELAN_REGISTRATION_TOKEN=selanreg_ci-stack-test SELAN_KEYS_REGISTRATION_TOKEN=selanreg_ci-keys-stack-test
-export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_VAULT=openbao
-export CONTROL_BASE_URL=http://fake-control:8080 SELAN_OUTSIDE_CHECK=no
-
-compose() { docker compose --project-directory "$root" "$@"; }
-mode() { stat -c '%U %a' "$1"; }
-ip_on() { docker inspect -f "{{(index .NetworkSettings.Networks \"selan_$2\").IPAddress}}" "selan-$1-1"; }
-reaches() { # reaches <container> <host> <port>: a TCP connect from inside a container
-  compose exec -T "$1" python -c "import socket; socket.create_connection(('$2', $3), timeout=4)" >/dev/null 2>&1
-}
-
-./install.sh | tee /tmp/install.log
+install | tee /tmp/install.log
 grep -q '^signed:  quay.io/openbao/openbao' /tmp/install.log || fail "install.sh did not check OpenBao's signature"
 pass "install.sh finished, OpenBao's cosign signature checked"
 
@@ -52,7 +21,6 @@ for host in gw mcp keys; do
   [ "$code" = 200 ] || fail "https://$host.selan-ci.test/readyz answered $code"
 done
 pass "/readyz answers 200 through Caddy for the proxy, the gateway and selan-keys"
-control_log() { compose logs --no-log-prefix fake-control; }
 [ "$(control_log | grep -c 'accepted')" = 3 ] || fail "control did not see exactly three registrations: $(control_log)"
 ! control_log | grep -q refused || fail "control refused a registration: $(control_log)"
 for component in proxy gateway keys; do
@@ -103,7 +71,7 @@ code=$(docker run --rm --network selan_front -e "C=$(ip_on caddy front)" --entry
 [ "$code" = 200 ] || fail "a private address was refused by Caddy ($code)"
 
 before=$(sha256sum openbao-init.json .env)
-env -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN ./install.sh >/dev/null
+install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/dev/null
 [ "$before" = "$(sha256sum openbao-init.json .env)" ] || fail "a second run changed openbao-init.json or .env"
 pass "a second run of install.sh, without the used tokens, changes nothing and is ready again"
 
@@ -119,12 +87,40 @@ curl -sfk -o /dev/null --resolve gw.selan-ci.test:443:127.0.0.1 https://gw.selan
 [ "$(control_log | grep -c 'RegisterServer')" = 3 ] || fail "a restart registered again instead of keeping its identity"
 pass "after a restart OpenBao is sealed, unseal.sh opens it, the proxy is ready again and did not register again"
 
+compose restart openbao >/dev/null 2>&1
+compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed by itself"
+before=$(sha256sum .env)
+install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/dev/null
+compose exec -T openbao bao status >/dev/null 2>&1 || fail "a re-run of install.sh left OpenBao sealed"
+[ "$before" = "$(sha256sum .env)" ] || fail "a re-run on a sealed vault changed .env"
+pass "a re-run of install.sh on a sealed vault unseals it and changes nothing"
+
+old=$(grep '^KEYS_VAULT_SECRET_ID=' .env)
+install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN KEYS_VAULT_SECRET_ID=not-a-secret-id >/dev/null
+[ "$old" != "$(grep '^KEYS_VAULT_SECRET_ID=' .env)" ] || fail "a secret id that no longer logs in was kept"
+ready keys -k || fail "selan-keys is not ready with its new secret id"
+pass "a secret id that no longer logs in is replaced, and selan-keys is ready with the new one"
+
 cp signers.txt /tmp/signers.txt
 sed -i 's#github\\.com/openbao/openbao/#github\\.com/someone-else/openbao/#' signers.txt
 status=0
-env -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN ./install.sh >/tmp/install.log 2>&1 || status=$?
+install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/tmp/install.log 2>&1 || status=$?
 cp /tmp/signers.txt signers.txt
 if [ "$status" = 0 ] || ! grep -q 'openbao.* is not signed by' /tmp/install.log; then
   fail "install.sh did not refuse an image signed by somebody else: $(tail -n 5 /tmp/install.log)"
 fi
 pass "install.sh refuses an image whose signature names another signer than signers.txt"
+
+cp openbao-init.json /tmp/openbao-init.json
+sed -i '/"root_token"/d' openbao-init.json
+refused 1 'no root token in .*openbao-init.json' -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN
+cp /tmp/openbao-init.json openbao-init.json
+pass "an init file without a root token is refused"
+
+mv openbao-init.json /tmp/openbao-init.json
+refused 1 'already initialised but .*openbao-init.json is missing' -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN
+mv /tmp/openbao-init.json openbao-init.json
+compose rm -sf openbao >/dev/null 2>&1
+docker volume rm selan_openbao-data >/dev/null
+refused 1 "OpenBao's data is empty but .*openbao-init.json exists" -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN
+pass "install.sh refuses an initialised OpenBao without its init file, and an init file without OpenBao's data"

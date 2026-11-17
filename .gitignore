@@ -5,3 +5,4 @@
 /openbao-init.json.tmp
 /certs/*
 !/certs/.gitkeep
+/ci-out/

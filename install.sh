@@ -14,6 +14,9 @@ set -euo pipefail
 # Runs `cosign verify` for every image; pinned, as everything this script starts is.
 COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
 DNS_PROVIDERS="bunny cloudflare digitalocean duckdns gandi hetzner ionos linode vultr"
+# Where the check from outside asks: public DNS over HTTPS, and check-host.net's TCP probes.
+PUBLIC_DNS=${SELAN_PUBLIC_DNS:-https://1.1.1.1}
+CHECK_HOST=${SELAN_CHECK_HOST:-https://check-host.net}
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -131,7 +134,7 @@ has_tty() { [ "${SELAN_NONINTERACTIVE:-}" != 1 ] && (exec </dev/tty) 2>/dev/null
 
 ask() {
   local answer=""
-  has_tty || fail "$2 is not set; export $1 and run again"
+  has_tty || fail "$1 is not set ($2); export it and run again"
   printf '%s: ' "$2" >/dev/tty
   read -r answer </dev/tty || true
   printf '%s' "$answer"
@@ -253,7 +256,7 @@ read_vault() {
 
 ask_secret() {
   local answer=""
-  has_tty || fail "$2 is not set; export $1 and run again"
+  has_tty || fail "$1 is not set ($2); export it and run again"
   printf '%s (not shown): ' "$2" >/dev/tty
   read -rs answer </dev/tty || true
   printf '\n' >/dev/tty
@@ -309,40 +312,48 @@ certificate_files() {
 }
 
 # .env is the only place the tokens and the vault's AppRole ids are kept: root's, mode 0600.
+# Each value is exported too: compose reads the environment before .env, so a setting given in the
+# environment must not override what install.sh resolved from it (a replaced secret id, a cleared token).
 write_env() {
   local tmp="$ENV_FILE.tmp"
   install -m 0600 /dev/null "$tmp"
   {
     printf '# Written by install.sh at %s. Root only: it holds the registration token, the DNS token and vault ids.\n' "$TAG"
-    printf "SELAN_PROXY_HOST='%s'\n" "$PROXY_HOST"
-    printf "SELAN_GATEWAY_HOST='%s'\n" "$GATEWAY_HOST"
-    printf "SELAN_KEYS_HOST='%s'\n" "$KEYS_HOST"
-    printf "SELAN_BIND_ADDR='%s'\n" "$BIND_ADDR"
-    printf "SELAN_TLS='%s'\n" "$TLS"
+    put SELAN_PROXY_HOST "$PROXY_HOST"
+    put SELAN_GATEWAY_HOST "$GATEWAY_HOST"
+    put SELAN_KEYS_HOST "$KEYS_HOST"
+    put SELAN_BIND_ADDR "$BIND_ADDR"
+    put SELAN_TLS "$TLS"
     if [ "$TLS" = dns ]; then
-      printf "SELAN_DNS_PROVIDER='%s'\n" "$DNS_PROVIDER"
-      printf "SELAN_DNS_TOKEN='%s'\n" "$DNS_TOKEN"
+      put SELAN_DNS_PROVIDER "$DNS_PROVIDER"
+      put SELAN_DNS_TOKEN "$DNS_TOKEN"
       printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
     fi
-    printf "ALLOWED_CIDRS='%s'\n" "$ALLOWED"
-    [ -z "$CONTROL" ] || printf "CONTROL_BASE_URL='%s'\n" "$CONTROL"
-    [ -z "$AUTH" ] || printf "AUTH_BASE_URL='%s'\n" "$AUTH"
-    printf "SELAN_REGISTRATION_TOKEN='%s'\n" "$TOKEN"
-    printf "SELAN_KEYS_REGISTRATION_TOKEN='%s'\n" "$KEYS_TOKEN"
-    printf "PROXY_KEYS_TOKEN='%s'\n" "$PROXY_KEYS_TOKEN"
-    printf "GATEWAY_KEYS_TOKEN='%s'\n" "$GATEWAY_KEYS_TOKEN"
-    printf "SELAN_VAULT='%s'\n" "$VAULT"
+    put ALLOWED_CIDRS "$ALLOWED"
+    [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
+    [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
+    put SELAN_REGISTRATION_TOKEN "$TOKEN"
+    put SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
+    put PROXY_KEYS_TOKEN "$PROXY_KEYS_TOKEN"
+    put GATEWAY_KEYS_TOKEN "$GATEWAY_KEYS_TOKEN"
+    put SELAN_VAULT "$VAULT"
     if [ -n "$OWN_VAULT" ]; then
-      printf "COMPOSE_PROFILES=''\n"
-      printf "VAULT_ADDR='%s'\n" "$OWN_VAULT"
+      put COMPOSE_PROFILES ""
+      put VAULT_ADDR "$OWN_VAULT"
     else
-      printf "COMPOSE_PROFILES='openbao'\n"
+      put COMPOSE_PROFILES openbao
+      unset VAULT_ADDR
     fi
-    printf "VAULT_PREFIX='%s'\n" "$PREFIX"
-    printf "KEYS_VAULT_ROLE_ID='%s'\n" "$KEYS_ROLE"
-    printf "KEYS_VAULT_SECRET_ID='%s'\n" "$KEYS_SECRET"
+    put VAULT_PREFIX "$PREFIX"
+    put KEYS_VAULT_ROLE_ID "$KEYS_ROLE"
+    put KEYS_VAULT_SECRET_ID "$KEYS_SECRET"
   } >"$tmp"
   mv -f "$tmp" "$ENV_FILE"
+}
+
+put() {
+  printf "%s='%s'\n" "$1" "$2"
+  export "$1=$2"
 }
 
 # ---------------------------------------------------------------- the vault
@@ -361,9 +372,9 @@ openbao() {
   local init="$DIR/openbao-init.json" initialised=""
   step "OpenBao"
   write_env
-  compose up -d openbao >/dev/null 2>&1 || compose up -d openbao
+  compose up -d openbao
 
-  for _ in $(seq 60); do
+  for _ in $(seq $((${SELAN_READY_TIMEOUT:-120} / 2))); do
     # bao status exits 2 while sealed, so the answer is read from its output, not its code.
     initialised=$(BAO_TOKEN='' bao status -format=json 2>/dev/null | grep -Eo '"initialized": *(true|false)' || true)
     [ -n "$initialised" ] && break
@@ -479,14 +490,15 @@ verify_images() {
 }
 
 wait_ready() {
-  local host
+  local host tries
+  tries=$((${SELAN_READY_TIMEOUT:-300} / 5))
   step "Waiting for your server to register with Selan and answer /readyz"
   for host in "$PROXY_HOST" "$GATEWAY_HOST" "$KEYS_HOST"; do
-    for i in $(seq 60); do
+    for i in $(seq "$tries"); do
       curl -fsSk --max-time 5 -o /dev/null --resolve "$host:443:$BIND_ADDR" "https://$host/readyz" 2>/dev/null && break
-      [ "$i" = 60 ] && {
-        compose logs --tail 30 proxy gateway keys >&2 || true
-        fail "https://$host/readyz did not answer within 5 minutes"
+      [ "$i" = "$tries" ] && {
+        compose logs --tail 30 proxy gateway keys caddy >&2 || true
+        fail "https://$host/readyz did not answer within $((tries * 5)) seconds"
       }
       sleep 5
     done
@@ -500,16 +512,16 @@ wait_ready() {
 public_ipv4s() {
   local host
   for host in "$PROXY_HOST" "$GATEWAY_HOST" "$KEYS_HOST"; do
-    curl -fsS --max-time 10 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$host&type=A" |
+    curl -fsS --max-time 10 -H 'accept: application/dns-json' "$PUBLIC_DNS/dns-query?name=$host&type=A" |
       grep -Eo '"data": *"[0-9.]+"' | grep -Eo '[0-9.]+' || true
   done
-  curl -4fsS --max-time 10 https://1.1.1.1/cdn-cgi/trace | sed -n 's/^ip=//p' || true
+  curl -4fsS --max-time 10 "$PUBLIC_DNS/cdn-cgi/trace" | sed -n 's/^ip=//p' || true
 }
 
 # One TCP connect from three of check-host.net's nodes: answered, closed, or unknown.
 probe() {
   local started id result
-  started=$(curl -fsS --max-time 15 -H 'Accept: application/json' "https://check-host.net/check-tcp?host=$1&max_nodes=3") || {
+  started=$(curl -fsS --max-time 15 -H 'Accept: application/json' "$CHECK_HOST/check-tcp?host=$1&max_nodes=3") || {
     echo unknown
     return
   }
@@ -520,7 +532,7 @@ probe() {
   }
   for _ in $(seq 15); do
     sleep 2
-    result=$(curl -fsS --max-time 15 -H 'Accept: application/json' "https://check-host.net/check-result/$id") || continue
+    result=$(curl -fsS --max-time 15 -H 'Accept: application/json' "$CHECK_HOST/check-result/$id") || continue
     if [[ "$result" == *'"time"'* ]]; then
       echo answered
       return
