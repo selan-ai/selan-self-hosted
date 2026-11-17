@@ -73,7 +73,9 @@ sends your server's public address to check-host.net; `SELAN_OUTSIDE_CHECK=no` s
 ## Settings
 
 `install.sh` reads each from the environment, else from `/opt/selan/.env`, else asks on the terminal
-(a token without showing it). Pass the ones you set through sudo:
+(a token without showing it). Every question has a variable, so it also runs unattended, as on a fresh
+Ubuntu container with its own Docker daemon (`ci/dind-test.sh`); there it installs Docker itself and starts
+it without systemd. Pass the ones you set through sudo:
 `sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,…`.
 
 | Variable | |
@@ -87,7 +89,11 @@ sends your server's public address to check-host.net; `SELAN_OUTSIDE_CHECK=no` s
 | `SELAN_DNS_PROVIDER`, `SELAN_DNS_TOKEN` | with `dns`: the provider, and an API token that may edit TXT records in your zone; kept in `.env` only |
 | `SELAN_TLS_CERT`, `SELAN_TLS_KEY` | with `files`: paths to your CA's certificate chain and its key, copied into `/opt/selan/certs/` |
 | `ALLOWED_CIDRS` | who Caddy lets in: `private_ranges` (the default) or CIDRs separated by spaces |
+| `SELAN_VAULT` | `openbao` (started on this server) or `own`; `own` when `VAULT_ADDR` is set, asked otherwise |
 | `VAULT_ADDR`, `VAULT_PREFIX` | your own Vault, and the path its keys live under (`kv/selan/`) |
+| `KEYS_VAULT_ROLE_ID`, `KEYS_VAULT_SECRET_ID` | with `own`: selan-keys' AppRole on your Vault |
+| `SELAN_OUTSIDE_CHECK` | `no` skips the check from the internet |
+| `SELAN_NONINTERACTIVE` | `1` never asks: a missing setting fails, naming its variable. Without a terminal it never asks either |
 
 ## TLS on a private name
 
@@ -118,8 +124,8 @@ OpenBao starts sealed after every restart. `selan-unseal.service` unseals it at 
 that file. If you would rather unseal by hand, keep the file elsewhere, `systemctl disable selan-unseal`,
 and run `/opt/selan/unseal.sh` with the file put back.
 
-**Your own Vault** (HashiCorp Vault or OpenBao): set `VAULT_ADDR` and put the AppRole ids in
-`/opt/selan/.env` (root, mode 0600) before running `install.sh`:
+**Your own Vault** (HashiCorp Vault or OpenBao): answer `own` (or set `VAULT_ADDR`), and give
+selan-keys' AppRole when asked, or in the environment, or in `/opt/selan/.env` (root, mode 0600):
 
 ```sh
 KEYS_VAULT_ROLE_ID='...'
@@ -213,7 +219,9 @@ proxy.
 
 `.github/workflows/check.yml` runs shellcheck and actionlint, validates `compose.yaml` (with OpenBao, with
 your own Vault, with DNS-01) and the `Caddyfile` in every TLS mode and with every DNS provider, checks
-every image is pinned to a digest that exists, and runs `ci/stack-test.sh`: `install.sh` brings the
+every image is pinned to a digest that exists, and runs `ci/dind-test.sh`: a fresh Ubuntu 24.04 container
+with its own Docker daemon, this commit cloned to `/opt/selan`, and `ci/stack-test.sh` in it, where `install.sh`
+installs Docker, answers everything from the environment and brings the
 stack up with OpenBao, stand-ins for the proxy, the gateway and selan-keys (until their images are pinned) and a
 fake control, and the test asserts OpenBao's signature was checked and a wrong signer refused, `/readyz`,
 one `RegisterServer` per component carrying its Ed25519 and X25519 public keys (as selan-proto has it),

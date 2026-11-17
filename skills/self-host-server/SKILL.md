@@ -52,12 +52,12 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    the token pasted in by them, and the settings before it:
    ```sh
    ssh -t USER@HOST
-   export SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=VPN_ADDRESS SELAN_TLS=dns SELAN_DNS_PROVIDER=PROVIDER
-   export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_DNS_PROVIDER /opt/selan/install.sh
+   export SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=VPN_ADDRESS SELAN_TLS=dns SELAN_DNS_PROVIDER=PROVIDER SELAN_VAULT=openbao
+   export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_DNS_PROVIDER,SELAN_VAULT /opt/selan/install.sh
    ```
-   As a user that cannot write `/opt`, `sudo install -d -o "$USER" /opt/selan` first. Add `VAULT_ADDR`
-   (and its AppRole ids in `/opt/selan/.env`, README "Your own Vault") when they have a Vault. Without
-   one, OpenBao is initialised and the line prints the file holding its unseal key and root token; tell
+   As a user that cannot write `/opt`, `sudo install -d -o "$USER" /opt/selan` first. With a Vault of
+   their own, `SELAN_VAULT=own` and `VAULT_ADDR`; `install.sh` asks for selan-keys' AppRole (README,
+   "Your own Vault"). Without one, OpenBao is initialised and the line prints the file holding its unseal key and root token; tell
    them to copy it off the server and keep it, and that Claude has not read it. Wait until they say it
    finished, and ask for the last lines it printed (never a token). A `signed:` line per image means
    each cosign signature was checked.

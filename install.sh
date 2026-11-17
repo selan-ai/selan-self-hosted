@@ -64,7 +64,19 @@ install_docker() {
 
 start_docker() {
   docker info >/dev/null 2>&1 && return
-  command -v systemctl >/dev/null && systemctl enable --now docker >/dev/null 2>&1 || true
+  # Where the kernel has no nf_tables (some containers with their own Docker daemon), dockerd cannot
+  # make its NAT chains through iptables-nft; legacy iptables works there, as docker:dind chooses too.
+  if ! iptables -t nat -L >/dev/null 2>&1 && command -v iptables-legacy >/dev/null &&
+    iptables-legacy -t nat -L >/dev/null 2>&1; then
+    update-alternatives --set iptables "$(command -v iptables-legacy)" >/dev/null
+    update-alternatives --set ip6tables "$(command -v ip6tables-legacy)" >/dev/null
+  fi
+  if [ -d /run/systemd/system ]; then
+    systemctl enable --now docker >/dev/null 2>&1 || true
+  else
+    # No systemd, as in a container with its own Docker daemon: docker-ce's init script starts it.
+    service docker start >/dev/null 2>&1 || true
+  fi
   for _ in $(seq 30); do
     docker info >/dev/null 2>&1 && return
     sleep 1
@@ -114,9 +126,12 @@ setting() {
   printf '%s' "$value"
 }
 
+# A terminal to ask on; without one (CI, a container, a pipe) every answer comes from the environment.
+has_tty() { [ "${SELAN_NONINTERACTIVE:-}" != 1 ] && (exec </dev/tty) 2>/dev/null; }
+
 ask() {
   local answer=""
-  [ -r /dev/tty ] || fail "$2 is not set; export $1 and run again"
+  has_tty || fail "$2 is not set; export $1 and run again"
   printf '%s: ' "$2" >/dev/tty
   read -r answer </dev/tty || true
   printf '%s' "$answer"
@@ -182,15 +197,7 @@ read_settings() {
   PROXY_KEYS_TOKEN=$(caller_token PROXY_KEYS_TOKEN)
   GATEWAY_KEYS_TOKEN=$(caller_token GATEWAY_KEYS_TOKEN)
 
-  OWN_VAULT=$(setting VAULT_ADDR)
-  PREFIX=$(setting VAULT_PREFIX)
-  PREFIX=${PREFIX:-kv/selan/}
-  [[ "$PREFIX" =~ ^[A-Za-z0-9_/-]+/$ ]] || fail "VAULT_PREFIX is a path ending in /, like kv/selan/"
-  KEYS_ROLE=$(setting KEYS_VAULT_ROLE_ID)
-  KEYS_SECRET=$(setting KEYS_VAULT_SECRET_ID)
-  for id in "$KEYS_ROLE" "$KEYS_SECRET"; do
-    [[ "$id" =~ ^[A-Za-z0-9_.-]*$ ]] || fail "an AppRole id in $ENV_FILE has characters a role or secret id never has"
-  done
+  read_vault
 
   say "proxy    https://$PROXY_HOST"
   say "gateway  https://$GATEWAY_HOST"
@@ -218,9 +225,35 @@ caller_token() {
   printf '%s' "$token"
 }
 
+# OpenBao on this server, or the company's own Vault: SELAN_VAULT, implied by VAULT_ADDR, else asked.
+read_vault() {
+  VAULT=$(setting SELAN_VAULT)
+  OWN_VAULT=$(setting VAULT_ADDR)
+  [ -n "$VAULT" ] || [ -z "$OWN_VAULT" ] || VAULT=own
+  [ -n "$VAULT" ] || VAULT=$(ask SELAN_VAULT "The vault: openbao (started on this server) or own (your HashiCorp Vault or OpenBao)")
+  PREFIX=$(setting VAULT_PREFIX)
+  PREFIX=${PREFIX:-kv/selan/}
+  [[ "$PREFIX" =~ ^[A-Za-z0-9_/-]+/$ ]] || fail "VAULT_PREFIX is a path ending in /, like kv/selan/"
+  KEYS_ROLE=$(setting KEYS_VAULT_ROLE_ID)
+  KEYS_SECRET=$(setting KEYS_VAULT_SECRET_ID)
+  case "$VAULT" in
+    openbao) OWN_VAULT="" ;;
+    own)
+      [ -n "$OWN_VAULT" ] || OWN_VAULT=$(ask VAULT_ADDR "Your vault's address (https://vault.example.internal:8200)")
+      [[ "$OWN_VAULT" =~ ^https?://[A-Za-z0-9.:-]+(/.*)?$ ]] || fail "VAULT_ADDR '$OWN_VAULT' is not a URL"
+      [ -n "$KEYS_ROLE" ] || KEYS_ROLE=$(ask KEYS_VAULT_ROLE_ID "The role id of selan-keys' AppRole, limited to ${PREFIX}*")
+      [ -n "$KEYS_SECRET" ] || KEYS_SECRET=$(ask_secret KEYS_VAULT_SECRET_ID "Its secret id")
+      ;;
+    *) fail "SELAN_VAULT is openbao or own, not '$VAULT'" ;;
+  esac
+  for id in "$KEYS_ROLE" "$KEYS_SECRET"; do
+    [[ "$id" =~ ^[A-Za-z0-9_.-]*$ ]] || fail "an AppRole id has characters a role or secret id never has"
+  done
+}
+
 ask_secret() {
   local answer=""
-  [ -r /dev/tty ] || fail "$2 is not set; export $1 and run again"
+  has_tty || fail "$2 is not set; export $1 and run again"
   printf '%s (not shown): ' "$2" >/dev/tty
   read -rs answer </dev/tty || true
   printf '\n' >/dev/tty
@@ -298,6 +331,7 @@ write_env() {
     printf "SELAN_KEYS_REGISTRATION_TOKEN='%s'\n" "$KEYS_TOKEN"
     printf "PROXY_KEYS_TOKEN='%s'\n" "$PROXY_KEYS_TOKEN"
     printf "GATEWAY_KEYS_TOKEN='%s'\n" "$GATEWAY_KEYS_TOKEN"
+    printf "SELAN_VAULT='%s'\n" "$VAULT"
     if [ -n "$OWN_VAULT" ]; then
       printf "COMPOSE_PROFILES=''\n"
       printf "VAULT_ADDR='%s'\n" "$OWN_VAULT"
@@ -317,9 +351,8 @@ compose() { docker compose --project-directory "$DIR" "$@"; }
 bao() { compose exec -T -e BAO_TOKEN openbao bao "$@"; }
 
 own_vault() {
-  [[ "$OWN_VAULT" =~ ^https?://[A-Za-z0-9.:-]+(/.*)?$ ]] || fail "VAULT_ADDR '$OWN_VAULT' is not a URL"
   [ -n "$KEYS_ROLE" ] && [ -n "$KEYS_SECRET" ] ||
-    fail "with VAULT_ADDR set, put KEYS_VAULT_ROLE_ID and KEYS_VAULT_SECRET_ID (an AppRole limited to ${PREFIX}*) in $ENV_FILE, mode 0600; README, \"Your own Vault\""
+    fail "SELAN_VAULT=own needs KEYS_VAULT_ROLE_ID and KEYS_VAULT_SECRET_ID, an AppRole limited to ${PREFIX}*; README, \"Your own Vault\""
   say "Using your Vault at $OWN_VAULT; nothing in it is changed."
 }
 

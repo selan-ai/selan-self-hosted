@@ -2,7 +2,8 @@
 # Brings the stack up the way a server does, through install.sh, with OpenBao (its cosign signature
 # checked), stand-ins for the proxy, the gateway and selan-keys and a fake control, then checks it is
 # ready, registered with both public keys, and that only selan-keys reaches the vault.
-# Needs root and Docker; leaves the stack running for `docker compose logs` (ci/stack-down.sh removes it).
+# Runs as root on Ubuntu or Debian, Docker installed by install.sh if missing: ci/dind-test.sh runs it in a
+# fresh Ubuntu container with its own Docker daemon. Answers every question install.sh has from the environment.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -15,14 +16,18 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 stand_in=python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
 curl_image=curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
-caddy_image=$(ci/caddy-image.sh)
-[ -z "$caddy_image" ] || export SELAN_CADDY_IMAGE=$caddy_image
+caddy_image=""
+# Until a Caddy build is pinned, stock Caddy serves SELAN_TLS=internal; the compose job checks the build.
+if grep -qF "image: \${SELAN_CADDY_IMAGE:?" compose.yaml; then
+  caddy_image=caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+  export SELAN_CADDY_IMAGE=$caddy_image
+fi
 export SELAN_PROXY_IMAGE=$stand_in SELAN_GATEWAY_IMAGE=$stand_in SELAN_KEYS_IMAGE=$stand_in
-# The stand-ins, and a Caddy built here before the first one is published, are not signed: everything else is checked.
+# The stand-ins, and stock Caddy before ours is published, are not signed: everything else is checked.
 export SELAN_UNSIGNED_OK="$stand_in $caddy_image"
 export COMPOSE_FILE="$root/compose.yaml:$root/ci/compose.ci.yaml"
 export SELAN_REGISTRATION_TOKEN=selanreg_ci-stack-test SELAN_KEYS_REGISTRATION_TOKEN=selanreg_ci-keys-stack-test
-export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal
+export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_VAULT=openbao
 export CONTROL_BASE_URL=http://fake-control:8080 SELAN_OUTSIDE_CHECK=no
 
 compose() { docker compose --project-directory "$root" "$@"; }

@@ -91,16 +91,17 @@ jobs:
 
   stack:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: install.sh brings the stack up with OpenBao and a fake control
-        run: sudo -E bash ci/stack-test.sh
+      - name: install.sh on a fresh Ubuntu with its own Docker daemon, with OpenBao and a fake control
+        run: bash ci/dind-test.sh
 
       - name: logs
         if: failure()
         run: |
-          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused
-          export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
-          sudo -E docker compose --project-directory "$PWD" --profile openbao logs --tail 80
+          docker exec selan-ci-ubuntu bash -c 'tail -n 40 /var/log/docker.log; cd /opt/selan &&
+            export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused &&
+            export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml" &&
+            docker compose --project-directory "$PWD" --profile openbao logs --tail 80' || true
