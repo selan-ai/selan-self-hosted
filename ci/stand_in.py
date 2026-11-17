@@ -1,9 +1,11 @@
 """Stands in for the proxy or the gateway in CI until a release is pinned in compose.yaml.
 
 It does what the stack needs of them: log in to the vault with its AppRole, write and read a key
-under VAULT_PREFIX, be refused outside it, register with control using the one-time token once,
-keeping that in its identity volume as the real ones keep their key pair, and answer /healthz and /readyz.
+under VAULT_PREFIX, be refused outside it, make its Ed25519 (signing) and X25519 (sealing) key pairs in
+its identity volume, root only, call RegisterServer once with the one-time token and both public halves,
+and answer /healthz and /readyz.
 """
+import base64
 import json
 import os
 import threading
@@ -11,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from keys import ed25519_public, x25519_public
 
 COMPONENT = os.environ["STAND_IN_COMPONENT"]
 VAULT = os.environ["VAULT_ADDR"].rstrip("/")
@@ -43,15 +47,36 @@ def check_once():
     assert status == 200 and read["data"]["data"]["value"] == "not-a-key", f"reading it back answered {status}"
     status, _ = call("GET", f"{VAULT}/v1/{MOUNT}/data/elsewhere/canary", token=token)
     assert status == 403, f"reading outside the prefix answered {status}, not 403"
-    identity = os.path.join(os.environ["SELAN_IDENTITY_DIR"], "identity")
-    if os.path.exists(identity):
+    register_once()
+
+
+def private_key(name):
+    """A 32-byte private half, made once and kept in the identity volume, mode 0600."""
+    path = os.path.join(os.environ["SELAN_IDENTITY_DIR"], name)
+    if not os.path.exists(path):
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(os.urandom(32))
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def register_once():
+    registered = os.path.join(os.environ["SELAN_IDENTITY_DIR"], "registered")
+    signing, sealing = private_key("signing.key"), private_key("sealing.key")
+    if os.path.exists(registered):
         return
-    status, _ = call("POST", os.environ["CONTROL_BASE_URL"] + "/register",
-                     {"component": COMPONENT, "token": os.environ["SELAN_REGISTRATION_TOKEN"],
-                      "address": os.environ["PUBLIC_BASE_URL"]})
-    assert status == 200, f"control answered {status} to the registration"
-    with open(identity, "w") as handle:
-        handle.write(COMPONENT)
+    status, answer = call("POST", os.environ["CONTROL_BASE_URL"] + "/control.v1.OwnServersService/RegisterServer", {
+        "registrationToken": os.environ["SELAN_REGISTRATION_TOKEN"],
+        "component": f"OWN_SERVERS_COMPONENT_{COMPONENT.upper()}",
+        "address": os.environ["PUBLIC_BASE_URL"],
+        "publicKey": base64.b64encode(ed25519_public(signing)).decode(),
+        "sealingPublicKey": base64.b64encode(x25519_public(sealing)).decode(),
+        "version": "0.0.0-ci",
+    })
+    assert status == 200, f"control answered {status} to RegisterServer"
+    with open(registered, "w") as handle:
+        handle.write(answer["serverId"])
 
 
 def setup():

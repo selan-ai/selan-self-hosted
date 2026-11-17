@@ -1,0 +1,7 @@
+# Who must have signed each image compose.yaml runs. install.sh checks every image's cosign signature
+# against its line here before it pulls or runs that digest, and refuses an image with no line.
+# repository  certificate identity (an anchored regular expression)  OIDC issuer
+europe-docker.pkg.dev/selan-prod/selan-public/selan-proxy  ^https://gitlab\.com/selan\.ai/platform/selan-proxy//\.gitlab-ci\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$  https://gitlab.com
+europe-docker.pkg.dev/selan-prod/selan-public/selan-mcp-gateway  ^https://gitlab\.com/selan\.ai/reactor/selan-mcp-gateway//\.gitlab-ci\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$  https://gitlab.com
+ghcr.io/selan-ai/selan-self-hosted/caddy  ^https://github\.com/selan-ai/selan-self-hosted/\.github/workflows/caddy-image\.yml@refs/heads/main$  https://token.actions.githubusercontent.com
+quay.io/openbao/openbao  ^https://github\.com/openbao/openbao/\.github/workflows/release-images\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$  https://token.actions.githubusercontent.com

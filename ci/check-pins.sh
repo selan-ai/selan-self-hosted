@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Every image compose.yaml runs is pinned by digest, and every pinned digest exists.
-# Until its first release, selan-proxy and selan-mcp-gateway may be the pending form instead,
-# ${SELAN_PROXY_IMAGE:?...}, which refuses to start; README, "Upgrade".
+# Every image compose.yaml runs, the cosign image install.sh runs and caddy/Dockerfile builds from is
+# pinned by digest, and every pinned digest exists. Until their first release, selan-proxy, the gateway
+# and Caddy may be the pending form instead, ${SELAN_PROXY_IMAGE:?...}, which refuses to start.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 fail=0
+images() {
+  sed -n 's/^ *image: *//p' compose.yaml
+  sed -n 's/^COSIGN_IMAGE=//p' install.sh
+  sed -n 's/^FROM \(--platform=[^ ]* \)\{0,1\}\([^ ]*\).*/\2/p' caddy/Dockerfile
+}
 while read -r image; do
   case "$image" in
-    "\${SELAN_PROXY_IMAGE:?"* | "\${SELAN_GATEWAY_IMAGE:?"*)
+    "\${SELAN_PROXY_IMAGE:?"* | "\${SELAN_GATEWAY_IMAGE:?"* | "\${SELAN_CADDY_IMAGE:?"*)
       echo "pending: ${image%%:?*}} has no release pinned yet"
       ;;
     *@sha256:*)
@@ -29,5 +34,5 @@ while read -r image; do
       fail=1
       ;;
   esac
-done < <(sed -n 's/^ *image: *//p' compose.yaml)
+done < <(images)
 exit "$fail"

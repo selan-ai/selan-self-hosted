@@ -22,7 +22,17 @@ jobs:
           done
 
       - name: shellcheck
-        run: shellcheck --version && git ls-files -z '*.sh' | xargs -0 shellcheck
+        run: |
+          git ls-files -z '*.sh' | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt \
+            koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
+      - name: the stand-ins' key derivation matches RFC 8032 and RFC 7748
+        run: python3 -I ci/keys.py
 
   compose:
     runs-on: ubuntu-latest
@@ -33,19 +43,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: compose config, with OpenBao and with your own Vault
+      - name: the Caddy build
+        run: |
+          image=$(ci/caddy-image.sh)
+          [ -n "$image" ] || image=$(sed -n 's/^ *image: *\(ghcr.io\/selan-ai\/selan-self-hosted\/caddy@.*\)$/\1/p' compose.yaml)
+          echo "CADDY=$image" >>"$GITHUB_ENV"
+          echo "SELAN_CADDY_IMAGE=$image" >>"$GITHUB_ENV"
+
+      - name: compose config, with OpenBao, with your own Vault, and with DNS-01
         run: |
           docker compose --env-file .env.example config --quiet
           docker compose --env-file .env.example --profile openbao config --quiet
           docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway openbao proxy '
+          export SELAN_TLS=dns SELAN_DNS_PROVIDER=hetzner SELAN_DNS_TOKEN=ci-not-a-token
+          dns=(docker compose --env-file .env.example -f compose.yaml -f compose.dns.yaml)
+          "${dns[@]}" config --quiet
+          "${dns[@]}" config --format json | jq -e '.services.caddy.networks | has("egress")' >/dev/null
+          docker compose --env-file .env.example config --format json | jq -e '.services.caddy.networks | has("egress") | not' >/dev/null
 
-      - name: Caddyfile, both TLS modes
+      - name: Caddyfile, every TLS mode and every DNS provider install.sh offers
         run: |
-          for tls in internal files; do
+          adapt() {
             docker run --rm -e SELAN_PROXY_HOST=gw.example.com -e SELAN_GATEWAY_HOST=mcp.example.com \
-              -e SELAN_TLS=$tls -e ALLOWED_CIDRS=private_ranges -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-              caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0 \
-              caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+              -e ALLOWED_CIDRS=private_ranges -e SELAN_DNS_TOKEN=ci-secret-token "$@" \
+              -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY" caddy adapt --config /etc/caddy/Caddyfile
+          }
+          adapt -e SELAN_TLS=internal >/dev/null
+          adapt -e SELAN_TLS=files >/dev/null
+          modules=$(docker run --rm "$CADDY" caddy list-modules)
+          read -ra providers < <(sed -n 's/^DNS_PROVIDERS="\(.*\)"$/\1/p' install.sh)
+          [ "${#providers[@]}" -gt 0 ]
+          for provider in "${providers[@]}"; do
+            grep -qx "dns.providers.$provider" <<<"$modules" || { echo "$CADDY has no dns.providers.$provider" >&2; exit 1; }
+            config=$(adapt -e SELAN_TLS=dns -e SELAN_DNS_PROVIDER="$provider")
+            ! grep -q ci-secret-token <<<"$config" || { echo "the DNS token is written into Caddy's config" >&2; exit 1; }
+            echo "dns.providers.$provider: ok"
           done
 
       - name: every image pinned by digest, and every digest real
@@ -53,7 +85,7 @@ jobs:
 
   stack:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -63,5 +95,5 @@ jobs:
       - name: logs
         if: failure()
         run: |
-          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
+          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_CADDY_IMAGE=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
           sudo -E docker compose --project-directory "$PWD" --profile openbao logs --tail 80

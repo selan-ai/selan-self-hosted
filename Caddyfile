@@ -1,17 +1,27 @@
-# TLS for the proxy and the gateway, on the VPN address compose publishes.
-# SELAN_TLS is `internal` (Caddy's own CA) or `files` (./certs/fullchain.pem and privkey.pem).
+# TLS for the proxy and the gateway, on the VPN address compose publishes. A private name cannot use
+# HTTP-01 or TLS-ALPN, which Let's Encrypt checks from the internet, so SELAN_TLS is one of:
+#   dns       Let's Encrypt over the DNS-01 challenge, with SELAN_DNS_PROVIDER and its SELAN_DNS_TOKEN
+#   files     the company's own CA: ./certs/fullchain.pem and privkey.pem, valid for both names
+#   internal  Caddy's own CA, for a trial: every client has to trust it
 {
 	auto_https disable_redirects
 	skip_install_trust
 	ocsp_stapling off
 }
 
-(tls-internal) {
-	tls internal
+# {env.…} is read when Caddy starts, so the token is never written into Caddy's saved config.
+(tls-dns) {
+	tls {
+		dns {$SELAN_DNS_PROVIDER} {env.SELAN_DNS_TOKEN}
+	}
 }
 
 (tls-files) {
 	tls /certs/fullchain.pem /certs/privkey.pem
+}
+
+(tls-internal) {
+	tls internal
 }
 
 # A request from outside ALLOWED_CIDRS is refused here, even if the port is reached.

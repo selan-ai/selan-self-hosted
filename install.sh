@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# Installs Selan's proxy and MCP gateway on this server, inside the company's VPN, with its vault.
+# Installs Selan's proxy and MCP gateway on this server, inside the company's VPN, with its vault,
+# from the checkout it sits in: a release tag of this repository the company chose and read first.
 #
-#   export SELAN_REGISTRATION_TOKEN=selanreg_...
-#   curl -fsSL https://selan.ai/self-hosted/install.sh | sudo --preserve-env=SELAN_REGISTRATION_TOKEN bash
+#   export SELAN_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 --branch <tag> \
+#     https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 #
-# Safe to run again: it keeps what is already set up, and with a newer commit it upgrades.
-# Settings it reads from the environment, else from /opt/selan/.env, else asks: README, "Settings".
+# It fetches nothing of this repository and nothing from selan.ai. Safe to run again: it keeps what is
+# set up, and run from a newer tag it upgrades. Settings come from the environment, else .env, else a
+# question: README, "Settings".
 set -euo pipefail
 
-REPO=https://github.com/selan-ai/selan-self-hosted
-# selan.ai writes the commit it serves this file from here; README, "How install.sh is served".
-PINNED_COMMIT=""
+# Runs `cosign verify` for every image; pinned, as everything this script starts is.
+COSIGN_IMAGE=ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
+DNS_PROVIDERS="bunny cloudflare digitalocean duckdns gandi hetzner ionos linode vultr"
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -19,7 +21,7 @@ fail() {
 }
 step() { printf '\n==> %s\n' "$*"; }
 
-[ "$(id -u)" = 0 ] || fail "run as root: curl -fsSL https://selan.ai/self-hosted/install.sh | sudo --preserve-env=SELAN_REGISTRATION_TOKEN bash"
+[ "$(id -u)" = 0 ] || fail "run as root: sudo --preserve-env=SELAN_REGISTRATION_TOKEN $0"
 umask 077
 
 # ---------------------------------------------------------------- tools and Docker
@@ -28,16 +30,12 @@ debian_like() {
   [ -r /etc/os-release ] && grep -Eq '^(ID|ID_LIKE)=.*(debian|ubuntu)' /etc/os-release
 }
 
-install_tools() {
-  local missing=()
-  for tool in curl git; do
-    command -v "$tool" >/dev/null || missing+=("$tool")
-  done
-  [ "${#missing[@]}" = 0 ] && return
-  debian_like || fail "install ${missing[*]} first; this script installs them only on Debian or Ubuntu"
-  step "Installing ${missing[*]}"
+install_curl() {
+  command -v curl >/dev/null && return
+  debian_like || fail "install curl first; this script installs it only on Debian or Ubuntu"
+  step "Installing curl"
   apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl git >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl >/dev/null
 }
 
 install_docker() {
@@ -73,32 +71,26 @@ start_docker() {
   fail "Docker is installed but not running"
 }
 
-# ---------------------------------------------------------------- this repository, at one commit
+# ---------------------------------------------------------------- this checkout, at the tag it was cloned at
 
-fetch_repo() {
-  local here
-  here=$(cd "$(dirname "${BASH_SOURCE[0]:-/nonexistent/x}")" 2>/dev/null && pwd || true)
-  if [ -n "$PINNED_COMMIT" ]; then
-    [[ "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "PINNED_COMMIT is not a commit sha"
-    DIR=${SELAN_DIR:-/opt/selan}
-    step "Fetching $REPO at $PINNED_COMMIT into $DIR"
-    install -d -m 0700 "$DIR"
-    # The checked-out files are mounted into OpenBao and Caddy, which do not run as root.
-    (
-      umask 022
-      [ -d "$DIR/.git" ] || git -C "$DIR" init -q
-      git -C "$DIR" fetch -q --depth 1 "$REPO" "$PINNED_COMMIT"
-      git -C "$DIR" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
-    ) || fail "could not check out $PINNED_COMMIT in $DIR; move local changes to this repository's files away first"
-    [ "$(git -C "$DIR" rev-parse HEAD)" = "$PINNED_COMMIT" ] || fail "$DIR is not at $PINNED_COMMIT"
-    COMMIT=$PINNED_COMMIT
-  elif [ -n "$here" ] && [ -f "$here/compose.yaml" ] && [ -f "$here/unseal.sh" ]; then
-    DIR=$here
-    COMMIT=$(git -C "$DIR" rev-parse -q --verify HEAD 2>/dev/null || echo "an unversioned copy")
-    step "Using this checkout, $DIR, at $COMMIT"
-  else
-    fail "this copy of install.sh is not pinned to a commit; use https://selan.ai/self-hosted/install.sh"
-  fi
+find_checkout() {
+  DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-/nonexistent/x}")" 2>/dev/null && pwd || true)
+  [ -n "$DIR" ] && [ -f "$DIR/compose.yaml" ] && [ -f "$DIR/signers.txt" ] ||
+    fail "run install.sh from a clone of https://github.com/selan-ai/selan-self-hosted at a release tag; README, \"Install\""
+  local git=(git -c safe.directory="$DIR" -C "$DIR")
+  COMMIT=$("${git[@]}" rev-parse -q --verify HEAD 2>/dev/null || echo "an unversioned copy")
+  TAG=$("${git[@]}" describe --tags --exact-match HEAD 2>/dev/null || echo "no tag")
+  step "Installing from $DIR at $TAG ($COMMIT)"
+  [ "$TAG" != "no tag" ] || say "This checkout is not at a release tag; README, \"Upgrade\", says how to check one out."
+  # OpenBao reads its config as uid 100, whatever umask the clone was made under.
+  chmod go+r "$DIR/openbao.hcl" "$DIR/Caddyfile"
+}
+
+# At boot root runs unseal.sh from here, so a server install leaves nobody else able to change these files.
+own_checkout() {
+  [ "$DIR" = /opt/selan ] || return 0
+  chown -R root:root "$DIR"
+  chmod -R go-w "$DIR"
 }
 
 # ---------------------------------------------------------------- settings: environment, then .env, then a question
@@ -168,17 +160,7 @@ read_settings() {
   private_ipv4 "$BIND_ADDR" ||
     fail "SELAN_BIND_ADDR '$BIND_ADDR' is not a private IPv4 address; the proxy listens on your VPN only, never on a public address"
 
-  TLS=$(setting SELAN_TLS)
-  TLS=${TLS:-internal}
-  case "$TLS" in
-    internal) ;;
-    files)
-      [ -s "$DIR/certs/fullchain.pem" ] && [ -s "$DIR/certs/privkey.pem" ] ||
-        fail "SELAN_TLS=files needs $DIR/certs/fullchain.pem and privkey.pem, for both $PROXY_HOST and $GATEWAY_HOST"
-      ;;
-    *) fail "SELAN_TLS is internal or files, not '$TLS'" ;;
-  esac
-
+  read_tls
   ALLOWED=$(setting ALLOWED_CIDRS)
   ALLOWED=${ALLOWED:-private_ranges}
   [[ "$ALLOWED" =~ ^(private_ranges|[0-9a-f.:/\ ]+)$ ]] || fail "ALLOWED_CIDRS is private_ranges or a space-separated list of CIDRs"
@@ -211,20 +193,82 @@ read_settings() {
 
   say "proxy    https://$PROXY_HOST"
   say "gateway  https://$GATEWAY_HOST"
-  say "listens  $BIND_ADDR:443 (TLS: $TLS), answering $ALLOWED"
+  say "listens  $BIND_ADDR:443 (TLS: $TLS_SAID), answering $ALLOWED"
   if [ -n "$OWN_VAULT" ]; then say "vault    yours, $OWN_VAULT"; else say "vault    OpenBao, on this server"; fi
 }
 
-# .env is the only place the token and the vault's AppRole ids are kept: root's, mode 0600.
+ask_secret() {
+  local answer=""
+  [ -r /dev/tty ] || fail "$2 is not set; export $1 and run again"
+  printf '%s (not shown): ' "$2" >/dev/tty
+  read -rs answer </dev/tty || true
+  printf '\n' >/dev/tty
+  printf '%s' "$answer"
+}
+
+# A private name cannot be proved to Let's Encrypt over HTTP-01 or TLS-ALPN: DNS-01, or the company's CA.
+read_tls() {
+  TLS=$(setting SELAN_TLS)
+  [ -n "$TLS" ] || TLS=$(ask SELAN_TLS "TLS certificates: dns (Let's Encrypt, over your DNS provider's API) or files (from your own CA)")
+  DNS_PROVIDER="" DNS_TOKEN=""
+  case "$TLS" in
+    dns)
+      DNS_PROVIDER=$(setting SELAN_DNS_PROVIDER)
+      [ -n "$DNS_PROVIDER" ] || DNS_PROVIDER=$(ask SELAN_DNS_PROVIDER "Your DNS provider, one of: $DNS_PROVIDERS")
+      [[ " $DNS_PROVIDERS " == *" $DNS_PROVIDER "* ]] ||
+        fail "SELAN_DNS_PROVIDER '$DNS_PROVIDER' is not one of: $DNS_PROVIDERS. With another, use SELAN_TLS=files"
+      DNS_TOKEN=$(setting SELAN_DNS_TOKEN)
+      [ -n "$DNS_TOKEN" ] || DNS_TOKEN=$(ask_secret SELAN_DNS_TOKEN "An API token for $DNS_PROVIDER that may edit TXT records in your zone")
+      [[ "$DNS_TOKEN" =~ ^[A-Za-z0-9._:~+/=-]+$ ]] || fail "SELAN_DNS_TOKEN is empty or has characters an API token never has"
+      TLS_SAID="Let's Encrypt over DNS-01 at $DNS_PROVIDER"
+      ;;
+    files)
+      certificate_files
+      TLS_SAID="your CA's certificate in $DIR/certs"
+      ;;
+    internal) TLS_SAID="Caddy's own CA, for a trial: every client has to trust it" ;;
+    *) fail "SELAN_TLS is dns or files (or internal, for a trial), not '$TLS'" ;;
+  esac
+}
+
+# Copied in from SELAN_TLS_CERT and SELAN_TLS_KEY, or asked for, unless certs/ already has them.
+certificate_files() {
+  local cert key
+  cert=${SELAN_TLS_CERT:-} key=${SELAN_TLS_KEY:-}
+  if [ -z "$cert" ] && [ ! -s "$DIR/certs/fullchain.pem" ]; then
+    cert=$(ask SELAN_TLS_CERT "Path to the certificate chain (PEM) your CA issued for $PROXY_HOST and $GATEWAY_HOST")
+  fi
+  if [ -z "$key" ] && [ ! -s "$DIR/certs/privkey.pem" ]; then
+    key=$(ask SELAN_TLS_KEY "Path to its private key (PEM)")
+  fi
+  install -d -m 0700 "$DIR/certs"
+  if [ -n "$cert" ]; then
+    [ -s "$cert" ] || fail "$cert is not a file"
+    cmp -s "$cert" "$DIR/certs/fullchain.pem" || install -m 0644 "$cert" "$DIR/certs/fullchain.pem"
+  fi
+  if [ -n "$key" ]; then
+    [ -s "$key" ] || fail "$key is not a file"
+    cmp -s "$key" "$DIR/certs/privkey.pem" || install -m 0600 "$key" "$DIR/certs/privkey.pem"
+  fi
+  grep -q 'BEGIN CERTIFICATE' "$DIR/certs/fullchain.pem" 2>/dev/null || fail "$DIR/certs/fullchain.pem is not a PEM certificate chain"
+  grep -q 'PRIVATE KEY' "$DIR/certs/privkey.pem" 2>/dev/null || fail "$DIR/certs/privkey.pem is not a PEM private key"
+}
+
+# .env is the only place the token, the DNS token and the vault's AppRole ids are kept: root's, mode 0600.
 write_env() {
   local tmp="$ENV_FILE.tmp"
   install -m 0600 /dev/null "$tmp"
   {
-    printf '# Written by install.sh at %s. Root only: it holds the registration token and vault ids.\n' "$COMMIT"
+    printf '# Written by install.sh at %s. Root only: it holds the registration token, the DNS token and vault ids.\n' "$TAG"
     printf "SELAN_PROXY_HOST='%s'\n" "$PROXY_HOST"
     printf "SELAN_GATEWAY_HOST='%s'\n" "$GATEWAY_HOST"
     printf "SELAN_BIND_ADDR='%s'\n" "$BIND_ADDR"
     printf "SELAN_TLS='%s'\n" "$TLS"
+    if [ "$TLS" = dns ]; then
+      printf "SELAN_DNS_PROVIDER='%s'\n" "$DNS_PROVIDER"
+      printf "SELAN_DNS_TOKEN='%s'\n" "$DNS_TOKEN"
+      printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
+    fi
     printf "ALLOWED_CIDRS='%s'\n" "$ALLOWED"
     [ -z "$CONTROL" ] || printf "CONTROL_BASE_URL='%s'\n" "$CONTROL"
     [ -z "$AUTH" ] || printf "AUTH_BASE_URL='%s'\n" "$AUTH"
@@ -346,8 +390,40 @@ start() {
   step "Starting the proxy and the gateway"
   write_env
   compose config --quiet
-  compose pull --quiet
+  verify_images
+  compose pull --quiet --policy missing
   compose up -d --remove-orphans
+}
+
+# SELAN_UNSIGNED_OK names exact image references to start unchecked: CI's stand-ins, never a release.
+unsigned_ok() { [[ " ${SELAN_UNSIGNED_OK:-} " == *" $1 "* ]]; }
+
+# Every image compose runs: pinned by digest, and signed by the identity signers.txt names for it.
+verify_images() {
+  step "Checking each image's cosign signature"
+  local image name repo identity issuer images log
+  log=$(mktemp)
+  images=$(compose config --images | sort -u)
+  for image in $images; do
+    if unsigned_ok "$image"; then
+      say "NOT CHECKED: $image (SELAN_UNSIGNED_OK)"
+      continue
+    fi
+    [[ "$image" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] || fail "$image is not pinned by digest"
+    name=${image%@*}
+    repo=$name
+    [[ "${name##*/}" != *:* ]] || repo=${name%:*}
+    read -r identity issuer < <(awk -v r="$repo" '$1 == r { print $2, $3 }' "$DIR/signers.txt") ||
+      fail "signers.txt names nobody who signs $repo"
+    if ! docker run --rm "$COSIGN_IMAGE" verify --certificate-identity-regexp "$identity" \
+      --certificate-oidc-issuer "$issuer" "$image" >/dev/null 2>"$log"; then
+      tail -n 3 "$log" >&2
+      rm -f "$log"
+      fail "$image is not signed by $identity; nothing was started from it"
+    fi
+    say "signed:  $image"
+  done
+  rm -f "$log"
 }
 
 wait_ready() {
@@ -444,20 +520,21 @@ check_outside() {
 }
 
 main() {
-  install_tools
+  install_curl
   install_docker
   start_docker
-  fetch_repo
+  find_checkout
+  own_checkout
   read_settings
   if [ -n "$OWN_VAULT" ]; then own_vault; else openbao; fi
   start
   wait_ready
   check_outside
   step "Done"
-  say "Commit:  $COMMIT"
+  say "Tag:     $TAG ($COMMIT)"
   say "Files:   $DIR (settings in $DIR/.env, root only)"
   [ -n "$OWN_VAULT" ] || say "Vault:   OpenBao; unseal key and root token in $DIR/openbao-init.json (root only). Back it up off this server."
-  say "Selan shows this server under Settings › Own servers. Run this line again to upgrade."
+  say "Selan shows this server under Settings › Own servers. README, \"Upgrade\", says how to move to a newer tag."
 }
 
 main "$@"

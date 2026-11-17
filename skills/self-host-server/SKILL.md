@@ -1,17 +1,18 @@
 ---
 name: self-host-server
-description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway and their vault) on a server of theirs, such as a Hostinger VPS, given a host, an SSH user and their domain. Checks the host over SSH, shows the commit and compose.yaml, has the person run the install line with the registration token, checks nothing answers from the internet, and ends with one real request through the proxy.
+description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway and their vault) on a server of theirs, such as a Hostinger VPS, given a host, an SSH user and their domain. Checks the host over SSH, shows the release tag, compose.yaml and install.sh, asks how TLS is done (DNS-01 or their own CA), has the person run Add server's install line, checks nothing answers from the internet, and ends with one real request through the proxy.
 allowed-tools: Bash Read WebFetch mcp__hostinger__authenticate mcp__hostinger__complete_authentication
 ---
 
 # Selan's own-server stack on a server, over SSH
 
-The server runs `install.sh` from github.com/selan-ai/selan-self-hosted, at the commit selan.ai
-serves, nothing rewritten. Inputs: the host (or a Hostinger VPS to find), an SSH user with sudo,
+The server runs `install.sh` from a clone of github.com/selan-ai/selan-self-hosted at a release tag,
+nothing rewritten and nothing served by Selan. Installing and every upgrade run code Selan wrote: say so
+plainly, and that the protection is that they choose the tag and can read it first. Inputs: the host (or a Hostinger VPS to find), an SSH user with sudo,
 and the company's domain. The proxy is `gw.<domain>` and the gateway `mcp.<domain>` unless the
 person says otherwise.
 
-**Claude never sees the registration token or the vault's material.** Never `cat`, `grep` or copy
+**Claude never sees the registration token, the DNS token or the vault's material.** Never `cat`, `grep` or copy
 `/opt/selan/.env` or `/opt/selan/openbao-init.json`, never run a command that carries the token, and
 never ask the person to paste it into the chat. Checking a file is `stat` and `wc -c` only.
 
@@ -31,29 +32,35 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
      (`curl -s -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=gw.<domain>&type=A'`).
      A public answer is said plainly before going on;
    - port 443 on the VPN address is free.
-3. **Show before running.** The commit selan.ai serves:
-   `curl -fsSL https://selan.ai/self-hosted/install.sh | sed -n 's/^PINNED_COMMIT="\(.*\)"$/\1/p'`.
-   Print it, the full `compose.yaml` and `install.sh` at that commit
-   (`https://raw.githubusercontent.com/selan-ai/selan-self-hosted/<commit>/<file>`), and what it
+3. **Show before running.** The tag is the one in Add server's line (the newest release otherwise:
+   `git ls-remote --tags --refs https://github.com/selan-ai/selan-self-hosted | sort -t/ -k3 -V | tail -n 1`).
+   Print it, the full `compose.yaml`, `install.sh` and `signers.txt` at that tag
+   (`https://raw.githubusercontent.com/selan-ai/selan-self-hosted/<tag>/<file>`), and what it
    writes: `/opt/selan` (root only), Docker volumes `selan_*`, `selan-unseal.service`, and Docker
-   itself if missing. If `compose.yaml` still has `${SELAN_PROXY_IMAGE:?…}`, no release is pinned yet:
-   say so and stop. Wait for a yes.
-4. **TLS.** Caddy serves both names. `SELAN_TLS=internal` uses Caddy's own CA, which every client
-   then has to trust. For a certificate every browser accepts (control.selan.ai's Add key calls the
-   proxy from the browser), the person puts `fullchain.pem` and `privkey.pem` for both names in
-   `/opt/selan/certs/` (from their CA, or a DNS challenge, since nothing here is public) and sets
-   `SELAN_TLS=files`. Ask which.
-5. **The person runs the install.** Their own terminal, their own SSH session, the token from
-   Settings › Own servers › Add server pasted into the first line by them:
+   itself if missing. If `compose.yaml` still has `${SELAN_PROXY_IMAGE:?…}` (or the gateway's or
+   Caddy's), that image has no release pinned yet: say so and stop. Wait for a yes.
+4. **TLS: ask which.** The names are private, so Let's Encrypt's HTTP-01 and TLS-ALPN cannot work:
+   - `SELAN_TLS=dns`: Let's Encrypt over DNS-01. Ask for the DNS provider (bunny, cloudflare,
+     digitalocean, duckdns, gandi, hetzner, ionos, linode or vultr) and tell them to make an API token
+     limited to editing that zone's TXT records. They give it to `install.sh` themselves, when it asks
+     without showing it, never in this chat. The zone must be in public DNS; the A records need not be.
+   - `SELAN_TLS=files`: their own CA's certificate for both names. They copy the chain and key onto
+     the server and give their paths when `install.sh` asks (or as `SELAN_TLS_CERT`, `SELAN_TLS_KEY`).
+     Their people's machines must trust that CA.
+   Any other DNS provider means `files`.
+5. **The person runs the install.** Their own terminal, their own SSH session, Add server's line with
+   the token pasted in by them, and the settings before it:
    ```sh
    ssh -t USER@HOST
-   export SELAN_REGISTRATION_TOKEN=selanreg_... SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=VPN_ADDRESS SELAN_TLS=internal
-   curl -fsSL https://selan.ai/self-hosted/install.sh | sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS bash
+   export SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=VPN_ADDRESS SELAN_TLS=dns SELAN_DNS_PROVIDER=PROVIDER
+   export SELAN_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_DNS_PROVIDER /opt/selan/install.sh
    ```
-   Add `VAULT_ADDR` (and its AppRole ids in `/opt/selan/.env`, README "Your own Vault") when they
-   have a Vault. Without one, OpenBao is initialised and the line prints the file holding its unseal
-   key and root token; tell them to copy it off the server and keep it, and that Claude has not read it.
-   Wait until they say it finished, and ask for the last lines it printed (never the token).
+   As a user that cannot write `/opt`, `sudo install -d -o "$USER" /opt/selan` first. Add `VAULT_ADDR`
+   (and its AppRole ids in `/opt/selan/.env`, README "Your own Vault") when they have a Vault. Without
+   one, OpenBao is initialised and the line prints the file holding its unseal key and root token; tell
+   them to copy it off the server and keep it, and that Claude has not read it. Wait until they say it
+   finished, and ask for the last lines it printed (never a token). A `signed:` line per image means
+   each cosign signature was checked.
 6. **Check it** over SSH: `sudo docker compose --project-directory /opt/selan ps` shows proxy,
    gateway, caddy (and openbao) running; `stat -c '%U %a' /opt/selan/.env /opt/selan/openbao-init.json`
    is `root 600`; `curl -sk --resolve gw.DOMAIN:443:VPN_ADDRESS https://gw.DOMAIN/readyz` on the

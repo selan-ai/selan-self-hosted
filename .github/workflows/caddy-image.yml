@@ -1,0 +1,48 @@
+# Builds caddy/Dockerfile for amd64 and arm64 on main, pushes it to ghcr.io/selan-ai/selan-self-hosted/caddy
+# and signs the digest keylessly with cosign: the certificate names this file at refs/heads/main, which
+# is what signers.txt has install.sh check. A pull request then pins the digest in compose.yaml.
+name: caddy-image
+
+on:
+  push:
+    branches: [main]
+    paths: [caddy/**, .github/workflows/caddy-image.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/selan-ai/selan-self-hosted/caddy
+      COSIGN_VERSION: v3.1.4
+      COSIGN_SHA256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cosign, checked against its release checksum
+        run: |
+          curl -fsSL -o /tmp/cosign "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+          echo "$COSIGN_SHA256  /tmp/cosign" | sha256sum -c -
+          chmod +x /tmp/cosign
+
+      - name: build, push and sign
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use --name release >/dev/null
+          version=$(sed -n 's/.*xcaddy build \(v[0-9.]*\).*/\1/p' caddy/Dockerfile)
+          docker buildx build --platform linux/amd64,linux/arm64 --metadata-file /tmp/build.json \
+            -t "$IMAGE:${version#v}-${GITHUB_SHA::12}" --push caddy
+          digest=$(jq -r '."containerimage.digest"' /tmp/build.json)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the build named no digest" >&2; exit 1; }
+          /tmp/cosign sign --yes "$IMAGE@$digest"
+          /tmp/cosign verify --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/caddy-image.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$digest" >/dev/null
+          echo "released $IMAGE@$digest (${version#v}-${GITHUB_SHA::12})" | tee -a "$GITHUB_STEP_SUMMARY"
