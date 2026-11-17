@@ -2,7 +2,7 @@
 # Every setting install.sh refuses, each naming its variable; the questions it asks on a terminal, answered
 # there; a release with no codename in /etc/os-release; a VPN address found on its own; a run as non-root,
 # from outside a checkout and from a checkout elsewhere than /opt/selan; unpinned and unknown images; and
-# an OpenBao that does not start; a Docker that will not start.
+# an OpenBao that does not start; a kernel without nf_tables; a Docker that will not start.
 # shellcheck source=../lib.sh
 . "$(dirname "$0")/../lib.sh"
 
@@ -92,6 +92,16 @@ pass "an OpenBao that does not start is reported, with where to read its log"
 
 service docker stop >/dev/null 2>&1 || true
 mv /usr/bin/dockerd /usr/bin/dockerd.away
+# A kernel without nf_tables but with legacy iptables, as on some hosts with their own Docker daemon:
+# stand-ins for both binaries say so, whatever this runner's kernel has.
+nft=$(readlink -f /usr/sbin/iptables-nft)
+legacy=$(readlink -f /usr/sbin/iptables-legacy)
+update-alternatives --set iptables /usr/sbin/iptables-nft >/dev/null
+mv "$nft" "$nft.real" && printf '#!/bin/sh\nexit 1\n' >"$nft" && chmod +x "$nft"
+mv "$legacy" "$legacy.real" && printf '#!/bin/sh\nexit 0\n' >"$legacy" && chmod +x "$legacy"
 refused 1 'Docker is installed but not running'
+switched=$(readlink /etc/alternatives/iptables)
+mv "$nft.real" "$nft" && mv "$legacy.real" "$legacy"
+[ "$switched" = /usr/sbin/iptables-legacy ] || fail "without nf_tables install.sh did not switch to iptables-legacy ($switched)"
 mv /usr/bin/dockerd.away /usr/bin/dockerd
-pass "a Docker that will not start is reported"
+pass "without nf_tables install.sh switches to iptables-legacy, and a Docker that will not start is reported"
