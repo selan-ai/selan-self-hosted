@@ -3,8 +3,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_CADDY_IMAGE=unused SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal
-export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_GATEWAY_HOST=mcp.selan-ci.test
+export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused
+export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal
+export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_GATEWAY_HOST=mcp.selan-ci.test SELAN_KEYS_HOST=keys.selan-ci.test
 export COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
 docker compose --project-directory "$PWD" --profile openbao down -v --remove-orphans
 rm -f .env openbao-init.json

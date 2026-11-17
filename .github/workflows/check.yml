@@ -37,9 +37,10 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     env:
-      # compose.yaml refuses to start without a pinned proxy and gateway; these only satisfy `config`.
+      # compose.yaml refuses to start without a pinned proxy, gateway and selan-keys; these only satisfy `config`.
       SELAN_PROXY_IMAGE: example.invalid/selan-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000
       SELAN_GATEWAY_IMAGE: example.invalid/selan-mcp-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      SELAN_KEYS_IMAGE: example.invalid/selan-keys@sha256:0000000000000000000000000000000000000000000000000000000000000000
     steps:
       - uses: actions/checkout@v4
 
@@ -54,17 +55,22 @@ jobs:
         run: |
           docker compose --env-file .env.example config --quiet
           docker compose --env-file .env.example --profile openbao config --quiet
-          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway openbao proxy '
+          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway keys openbao proxy '
           export SELAN_TLS=dns SELAN_DNS_PROVIDER=hetzner SELAN_DNS_TOKEN=ci-not-a-token
           dns=(docker compose --env-file .env.example -f compose.yaml -f compose.dns.yaml)
           "${dns[@]}" config --quiet
           "${dns[@]}" config --format json | jq -e '.services.caddy.networks | has("egress")' >/dev/null
           docker compose --env-file .env.example config --format json | jq -e '.services.caddy.networks | has("egress") | not' >/dev/null
+          # Only selan-keys has a vault identity, and only it shares a network with the vault.
+          base=$(docker compose --env-file .env.example --profile openbao config --format json)
+          jq -e '[.services[] | select(.networks | has("vault"))] | length == 2' <<<"$base" >/dev/null
+          jq -e '.services.keys.networks | has("vault")' <<<"$base" >/dev/null
+          jq -e '[.services.proxy, .services.gateway, .services.caddy | .environment | keys[] | select(startswith("VAULT_"))] | length == 0' <<<"$base" >/dev/null
 
       - name: Caddyfile, every TLS mode and every DNS provider install.sh offers
         run: |
           adapt() {
-            docker run --rm -e SELAN_PROXY_HOST=gw.example.com -e SELAN_GATEWAY_HOST=mcp.example.com \
+            docker run --rm -e SELAN_PROXY_HOST=gw.example.com -e SELAN_GATEWAY_HOST=mcp.example.com -e SELAN_KEYS_HOST=keys.example.com \
               -e ALLOWED_CIDRS=private_ranges -e SELAN_DNS_TOKEN=ci-secret-token "$@" \
               -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY" caddy adapt --config /etc/caddy/Caddyfile
           }
@@ -95,5 +101,6 @@ jobs:
       - name: logs
         if: failure()
         run: |
-          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_CADDY_IMAGE=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
+          export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused
+          export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml"
           sudo -E docker compose --project-directory "$PWD" --profile openbao logs --tail 80

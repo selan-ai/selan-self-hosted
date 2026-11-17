@@ -1,7 +1,9 @@
 """Stands in for Selan's control in CI: OwnServersService/RegisterServer as Connect JSON, as selan-proto has it.
 
-Accepts the expected one-time token once per component, with an Ed25519 public_key and an X25519
-sealing_public_key of 32 bytes each, and an https address; refuses anything else, as control does.
+Accepts each component's expected one-time token once, with an Ed25519 public_key and an X25519
+sealing_public_key of 32 bytes each and an https address; refuses anything else, as control does.
+selan-keys has a token of its own; OWN_SERVERS_COMPONENT_KEYS is not in selan-proto's enum yet and
+stands for the value control will add.
 """
 import base64
 import binascii
@@ -11,7 +13,11 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PATH = "/control.v1.OwnServersService/RegisterServer"
-COMPONENTS = {"OWN_SERVERS_COMPONENT_PROXY", "OWN_SERVERS_COMPONENT_GATEWAY"}
+TOKENS = {
+    "OWN_SERVERS_COMPONENT_PROXY": os.environ["EXPECTED_TOKEN"],
+    "OWN_SERVERS_COMPONENT_GATEWAY": os.environ["EXPECTED_TOKEN"],
+    "OWN_SERVERS_COMPONENT_KEYS": os.environ["EXPECTED_KEYS_TOKEN"],
+}
 registered = set()
 
 
@@ -24,10 +30,10 @@ def raw_key(body, field):
 
 
 def refusal(body):
-    if body.get("registrationToken") != os.environ["EXPECTED_TOKEN"]:
-        return "permission_denied", "unknown registration token"
-    if body.get("component") not in COMPONENTS:
+    if body.get("component") not in TOKENS:
         return "invalid_argument", "component"
+    if body.get("registrationToken") != TOKENS[body["component"]]:
+        return "permission_denied", "unknown registration token"
     if body["component"] in registered:
         return "permission_denied", "token already used for this component"
     if not str(body.get("address", "")).startswith("https://"):

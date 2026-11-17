@@ -1,7 +1,7 @@
-# TLS for the proxy and the gateway, on the VPN address compose publishes. A private name cannot use
+# TLS for the proxy, the gateway and selan-keys (the admin's browser adds keys there), on the VPN address compose publishes. A private name cannot use
 # HTTP-01 or TLS-ALPN, which Let's Encrypt checks from the internet, so SELAN_TLS is one of:
 #   dns       Let's Encrypt over the DNS-01 challenge, with SELAN_DNS_PROVIDER and its SELAN_DNS_TOKEN
-#   files     the company's own CA: ./certs/fullchain.pem and privkey.pem, valid for both names
+#   files     the company's own CA: ./certs/fullchain.pem and privkey.pem, valid for all three names
 #   internal  Caddy's own CA, for a trial: every client has to trust it
 {
 	auto_https disable_redirects
@@ -40,4 +40,10 @@
 	import tls-{$SELAN_TLS}
 	import only-allowed
 	reverse_proxy gateway:8080
+}
+
+{$SELAN_KEYS_HOST} {
+	import tls-{$SELAN_TLS}
+	import only-allowed
+	reverse_proxy keys:8080
 }

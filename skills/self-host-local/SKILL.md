@@ -1,6 +1,6 @@
 ---
 name: self-host-local
-description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway, OpenBao and Caddy) running on this machine with Docker, to try it or as a small server. Runs the repository's own install.sh; the person runs the line with the registration token themselves.
+description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway, selan-keys, OpenBao and Caddy) running on this machine with Docker, to try it or as a small server. Runs the repository's own install.sh; the person runs the line with the registration token themselves.
 allowed-tools: Bash Read WebFetch
 ---
 
@@ -8,7 +8,7 @@ allowed-tools: Bash Read WebFetch
 
 The stack is `compose.yaml` in github.com/selan-ai/selan-self-hosted, brought up by its own
 `install.sh`, from a clone at a release tag: code Selan wrote, which the person can read first. This skill never repeats their steps; it checks the machine, shows what will run,
-and has the person run the one line. Claude never sees the registration token, `.env` or
+and has the person run the one line. Claude never sees a registration token, `.env` or
 `openbao-init.json`: never `cat` them, and never put the token in a command you run.
 
 1. **Check the machine.** `docker compose version` must work (Docker Desktop on macOS, Docker
@@ -32,12 +32,12 @@ and has the person run the one line. Claude never sees the registration token, `
    in themselves (on macOS, clone to a folder under `/Users` instead of `/opt/selan`):
    ```sh
    export SELAN_PROXY_HOST=gw.example.localhost SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_OUTSIDE_CHECK=no
-   export SELAN_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_OUTSIDE_CHECK /opt/selan/install.sh
+   export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_OUTSIDE_CHECK /opt/selan/install.sh
    ```
    It prints where OpenBao's unseal key and root token are (root only); tell them to keep a copy
    off this machine. `SELAN_OUTSIDE_CHECK=no` skips the check from the internet, which on a laptop
    behind NAT has nothing to find.
-5. **Check it.** `sudo docker compose --project-directory /opt/selan ps` shows proxy, gateway,
+5. **Check it.** `sudo docker compose --project-directory /opt/selan ps` shows proxy, gateway, keys,
    openbao and caddy running, and
    `curl -sk --resolve gw.example.localhost:443:127.0.0.1 https://gw.example.localhost/readyz`
    answers 200. The server appears under Settings › Own servers.

@@ -1,6 +1,6 @@
 ---
 name: self-host-server
-description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway and their vault) on a server of theirs, such as a Hostinger VPS, given a host, an SSH user and their domain. Checks the host over SSH, shows the release tag, compose.yaml and install.sh, asks how TLS is done (DNS-01 or their own CA), has the person run Add server's install line, checks nothing answers from the internet, and ends with one real request through the proxy.
+description: Use when someone wants Selan's self-hosted stack (Own servers: the proxy, the MCP gateway, selan-keys and their vault) on a server of theirs, such as a Hostinger VPS, given a host, an SSH user and their domain. Checks the host over SSH, shows the release tag, compose.yaml and install.sh, asks how TLS is done (DNS-01 or their own CA), has the person run Add server's install line, checks nothing answers from the internet, and ends with one real request through the proxy.
 allowed-tools: Bash Read WebFetch mcp__hostinger__authenticate mcp__hostinger__complete_authentication
 ---
 
@@ -12,7 +12,7 @@ plainly, and that the protection is that they choose the tag and can read it fir
 and the company's domain. The proxy is `gw.<domain>` and the gateway `mcp.<domain>` unless the
 person says otherwise.
 
-**Claude never sees the registration token, the DNS token or the vault's material.** Never `cat`, `grep` or copy
+**Claude never sees a registration token, the DNS token or the vault's material.** Never `cat`, `grep` or copy
 `/opt/selan/.env` or `/opt/selan/openbao-init.json`, never run a command that carries the token, and
 never ask the person to paste it into the chat. Checking a file is `stat` and `wc -c` only.
 
@@ -27,7 +27,7 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    - the VPN: an address on a `tailscale*`, `wg*`, `tun*`, `zt*` or `nebula*` interface
      (`ip -4 -o addr show`), in 10/8, 172.16/12, 192.168/16 or 100.64/10. No VPN, no install: their
      VPN is theirs to set up (README, "VPN required"); say so and stop;
-   - DNS: `gw.<domain>` and `mcp.<domain>` should resolve to that VPN address for the people who use
+   - DNS: `gw.<domain>`, `mcp.<domain>` and `keys.<domain>` should resolve to that VPN address for the people who use
      them, and not to a public address in public DNS
      (`curl -s -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=gw.<domain>&type=A'`).
      A public answer is said plainly before going on;
@@ -44,8 +44,8 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
      digitalocean, duckdns, gandi, hetzner, ionos, linode or vultr) and tell them to make an API token
      limited to editing that zone's TXT records. They give it to `install.sh` themselves, when it asks
      without showing it, never in this chat. The zone must be in public DNS; the A records need not be.
-   - `SELAN_TLS=files`: their own CA's certificate for both names. They copy the chain and key onto
-     the server and give their paths when `install.sh` asks (or as `SELAN_TLS_CERT`, `SELAN_TLS_KEY`).
+   - `SELAN_TLS=files`: their own CA's certificate for the `gw.`, `mcp.` and `keys.` names. They copy
+     the chain and key onto the server and give their paths when `install.sh` asks (or as `SELAN_TLS_CERT`, `SELAN_TLS_KEY`).
      Their people's machines must trust that CA.
    Any other DNS provider means `files`.
 5. **The person runs the install.** Their own terminal, their own SSH session, Add server's line with
@@ -53,7 +53,7 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    ```sh
    ssh -t USER@HOST
    export SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=VPN_ADDRESS SELAN_TLS=dns SELAN_DNS_PROVIDER=PROVIDER
-   export SELAN_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_DNS_PROVIDER /opt/selan/install.sh
+   export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_DNS_PROVIDER /opt/selan/install.sh
    ```
    As a user that cannot write `/opt`, `sudo install -d -o "$USER" /opt/selan` first. Add `VAULT_ADDR`
    (and its AppRole ids in `/opt/selan/.env`, README "Your own Vault") when they have a Vault. Without
@@ -62,7 +62,7 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    finished, and ask for the last lines it printed (never a token). A `signed:` line per image means
    each cosign signature was checked.
 6. **Check it** over SSH: `sudo docker compose --project-directory /opt/selan ps` shows proxy,
-   gateway, caddy (and openbao) running; `stat -c '%U %a' /opt/selan/.env /opt/selan/openbao-init.json`
+   gateway, keys, caddy (and openbao) running; `stat -c '%U %a' /opt/selan/.env /opt/selan/openbao-init.json`
    is `root 600`; `curl -sk --resolve gw.DOMAIN:443:VPN_ADDRESS https://gw.DOMAIN/readyz` on the
    server answers 200. Then the check from outside, from this machine as well when it is off the VPN:
    `curl -sk --max-time 5 https://gw.DOMAIN/readyz` and a TCP connect to the server's public IP on

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Installs Selan's proxy and MCP gateway on this server, inside the company's VPN, with its vault,
+# Installs Selan's proxy, MCP gateway and selan-keys on this server, inside the company's VPN, with its vault,
 # from the checkout it sits in: a release tag of this repository the company chose and read first.
 #
-#   export SELAN_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 --branch <tag> \
-#     https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
+#   export SELAN_REGISTRATION_TOKEN=selanreg_... SELAN_KEYS_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 \
+#     --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan &&
+#     sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN /opt/selan/install.sh
 #
 # It fetches nothing of this repository and nothing from selan.ai. Safe to run again: it keeps what is
 # set up, and run from a newer tag it upgrades. Settings come from the environment, else .env, else a
@@ -21,7 +22,7 @@ fail() {
 }
 step() { printf '\n==> %s\n' "$*"; }
 
-[ "$(id -u)" = 0 ] || fail "run as root: sudo --preserve-env=SELAN_REGISTRATION_TOKEN $0"
+[ "$(id -u)" = 0 ] || fail "run as root: sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN $0"
 umask 077
 
 # ---------------------------------------------------------------- tools and Docker
@@ -154,6 +155,10 @@ read_settings() {
   [ -n "$GATEWAY_HOST" ] || GATEWAY_HOST="mcp.${PROXY_HOST#*.}"
   valid_host "$GATEWAY_HOST" || fail "SELAN_GATEWAY_HOST '$GATEWAY_HOST' is not a host name"
 
+  KEYS_HOST=$(setting SELAN_KEYS_HOST)
+  [ -n "$KEYS_HOST" ] || KEYS_HOST="keys.${PROXY_HOST#*.}"
+  valid_host "$KEYS_HOST" || fail "SELAN_KEYS_HOST '$KEYS_HOST' is not a host name"
+
   BIND_ADDR=$(setting SELAN_BIND_ADDR)
   [ -n "$BIND_ADDR" ] || BIND_ADDR=$(vpn_address)
   [ -n "$BIND_ADDR" ] || BIND_ADDR=$(ask SELAN_BIND_ADDR "This server's address on your VPN (100.x, 10.x, 172.16-31.x or 192.168.x)")
@@ -172,29 +177,45 @@ read_settings() {
       fail "'$url' is not a base URL like https://control.selan.ai"
   done
 
-  TOKEN=${SELAN_REGISTRATION_TOKEN:-}
-  [ -n "$TOKEN" ] || TOKEN=$(saved SELAN_REGISTRATION_TOKEN)
-  if [ -z "$TOKEN" ] && [ ! -f "$ENV_FILE" ]; then
-    fail "SELAN_REGISTRATION_TOKEN is not set: copy the line from Settings › Own servers › Add server in Selan"
-  fi
-  [ -z "$TOKEN" ] || [[ "$TOKEN" =~ ^selanreg_[A-Za-z0-9_-]+$ ]] || fail "SELAN_REGISTRATION_TOKEN does not look like selanreg_…"
+  TOKEN=$(registration_token SELAN_REGISTRATION_TOKEN)
+  KEYS_TOKEN=$(registration_token SELAN_KEYS_REGISTRATION_TOKEN)
+  PROXY_KEYS_TOKEN=$(caller_token PROXY_KEYS_TOKEN)
+  GATEWAY_KEYS_TOKEN=$(caller_token GATEWAY_KEYS_TOKEN)
 
   OWN_VAULT=$(setting VAULT_ADDR)
   PREFIX=$(setting VAULT_PREFIX)
   PREFIX=${PREFIX:-kv/selan/}
   [[ "$PREFIX" =~ ^[A-Za-z0-9_/-]+/$ ]] || fail "VAULT_PREFIX is a path ending in /, like kv/selan/"
-  PROXY_ROLE=$(setting PROXY_VAULT_ROLE_ID)
-  PROXY_SECRET=$(setting PROXY_VAULT_SECRET_ID)
-  GATEWAY_ROLE=$(setting GATEWAY_VAULT_ROLE_ID)
-  GATEWAY_SECRET=$(setting GATEWAY_VAULT_SECRET_ID)
-  for id in "$PROXY_ROLE" "$PROXY_SECRET" "$GATEWAY_ROLE" "$GATEWAY_SECRET"; do
+  KEYS_ROLE=$(setting KEYS_VAULT_ROLE_ID)
+  KEYS_SECRET=$(setting KEYS_VAULT_SECRET_ID)
+  for id in "$KEYS_ROLE" "$KEYS_SECRET"; do
     [[ "$id" =~ ^[A-Za-z0-9_.-]*$ ]] || fail "an AppRole id in $ENV_FILE has characters a role or secret id never has"
   done
 
   say "proxy    https://$PROXY_HOST"
   say "gateway  https://$GATEWAY_HOST"
+  say "keys     https://$KEYS_HOST (selan-keys, the only part that reads the vault)"
   say "listens  $BIND_ADDR:443 (TLS: $TLS_SAID), answering $ALLOWED"
   if [ -n "$OWN_VAULT" ]; then say "vault    yours, $OWN_VAULT"; else say "vault    OpenBao, on this server"; fi
+}
+
+# Each one-time token from Add server: needed on the first run, gone from .env once used.
+registration_token() {
+  local token=${!1:-}
+  [ -n "$token" ] || token=$(saved "$1")
+  [ -n "$token" ] || [ -f "$ENV_FILE" ] ||
+    fail "$1 is not set: copy the line from Settings › Own servers › Add server in Selan"
+  [ -z "$token" ] || [[ "$token" =~ ^selanreg_[A-Za-z0-9_-]+$ ]] || fail "$1 does not look like selanreg_…"
+  printf '%s' "$token"
+}
+
+# What the proxy and the gateway present to selan-keys, one each: made here once, kept in .env.
+caller_token() {
+  local token
+  token=$(saved "$1")
+  [ -n "$token" ] || token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  [[ "$token" =~ ^[0-9a-f]{64}$ ]] || fail "$1 in $ENV_FILE is not 64 hex characters; delete the line to make a new one"
+  printf '%s' "$token"
 }
 
 ask_secret() {
@@ -236,7 +257,7 @@ certificate_files() {
   local cert key
   cert=${SELAN_TLS_CERT:-} key=${SELAN_TLS_KEY:-}
   if [ -z "$cert" ] && [ ! -s "$DIR/certs/fullchain.pem" ]; then
-    cert=$(ask SELAN_TLS_CERT "Path to the certificate chain (PEM) your CA issued for $PROXY_HOST and $GATEWAY_HOST")
+    cert=$(ask SELAN_TLS_CERT "Path to the certificate chain (PEM) your CA issued for $PROXY_HOST, $GATEWAY_HOST and $KEYS_HOST")
   fi
   if [ -z "$key" ] && [ ! -s "$DIR/certs/privkey.pem" ]; then
     key=$(ask SELAN_TLS_KEY "Path to its private key (PEM)")
@@ -254,7 +275,7 @@ certificate_files() {
   grep -q 'PRIVATE KEY' "$DIR/certs/privkey.pem" 2>/dev/null || fail "$DIR/certs/privkey.pem is not a PEM private key"
 }
 
-# .env is the only place the token, the DNS token and the vault's AppRole ids are kept: root's, mode 0600.
+# .env is the only place the tokens and the vault's AppRole ids are kept: root's, mode 0600.
 write_env() {
   local tmp="$ENV_FILE.tmp"
   install -m 0600 /dev/null "$tmp"
@@ -262,6 +283,7 @@ write_env() {
     printf '# Written by install.sh at %s. Root only: it holds the registration token, the DNS token and vault ids.\n' "$TAG"
     printf "SELAN_PROXY_HOST='%s'\n" "$PROXY_HOST"
     printf "SELAN_GATEWAY_HOST='%s'\n" "$GATEWAY_HOST"
+    printf "SELAN_KEYS_HOST='%s'\n" "$KEYS_HOST"
     printf "SELAN_BIND_ADDR='%s'\n" "$BIND_ADDR"
     printf "SELAN_TLS='%s'\n" "$TLS"
     if [ "$TLS" = dns ]; then
@@ -273,6 +295,9 @@ write_env() {
     [ -z "$CONTROL" ] || printf "CONTROL_BASE_URL='%s'\n" "$CONTROL"
     [ -z "$AUTH" ] || printf "AUTH_BASE_URL='%s'\n" "$AUTH"
     printf "SELAN_REGISTRATION_TOKEN='%s'\n" "$TOKEN"
+    printf "SELAN_KEYS_REGISTRATION_TOKEN='%s'\n" "$KEYS_TOKEN"
+    printf "PROXY_KEYS_TOKEN='%s'\n" "$PROXY_KEYS_TOKEN"
+    printf "GATEWAY_KEYS_TOKEN='%s'\n" "$GATEWAY_KEYS_TOKEN"
     if [ -n "$OWN_VAULT" ]; then
       printf "COMPOSE_PROFILES=''\n"
       printf "VAULT_ADDR='%s'\n" "$OWN_VAULT"
@@ -280,10 +305,8 @@ write_env() {
       printf "COMPOSE_PROFILES='openbao'\n"
     fi
     printf "VAULT_PREFIX='%s'\n" "$PREFIX"
-    printf "PROXY_VAULT_ROLE_ID='%s'\n" "$PROXY_ROLE"
-    printf "PROXY_VAULT_SECRET_ID='%s'\n" "$PROXY_SECRET"
-    printf "GATEWAY_VAULT_ROLE_ID='%s'\n" "$GATEWAY_ROLE"
-    printf "GATEWAY_VAULT_SECRET_ID='%s'\n" "$GATEWAY_SECRET"
+    printf "KEYS_VAULT_ROLE_ID='%s'\n" "$KEYS_ROLE"
+    printf "KEYS_VAULT_SECRET_ID='%s'\n" "$KEYS_SECRET"
   } >"$tmp"
   mv -f "$tmp" "$ENV_FILE"
 }
@@ -295,11 +318,8 @@ bao() { compose exec -T -e BAO_TOKEN openbao bao "$@"; }
 
 own_vault() {
   [[ "$OWN_VAULT" =~ ^https?://[A-Za-z0-9.:-]+(/.*)?$ ]] || fail "VAULT_ADDR '$OWN_VAULT' is not a URL"
-  [ -n "$PROXY_ROLE" ] && [ -n "$PROXY_SECRET" ] ||
-    fail "with VAULT_ADDR set, put PROXY_VAULT_ROLE_ID and PROXY_VAULT_SECRET_ID (an AppRole limited to ${PREFIX}*) in $ENV_FILE, mode 0600; README, \"Your own Vault\""
-  if [ -z "$GATEWAY_ROLE" ] || [ -z "$GATEWAY_SECRET" ]; then
-    GATEWAY_ROLE=$PROXY_ROLE GATEWAY_SECRET=$PROXY_SECRET
-  fi
+  [ -n "$KEYS_ROLE" ] && [ -n "$KEYS_SECRET" ] ||
+    fail "with VAULT_ADDR set, put KEYS_VAULT_ROLE_ID and KEYS_VAULT_SECRET_ID (an AppRole limited to ${PREFIX}*) in $ENV_FILE, mode 0600; README, \"Your own Vault\""
   say "Using your Vault at $OWN_VAULT; nothing in it is changed."
 }
 
@@ -340,14 +360,13 @@ openbao() {
   bao secrets list -format=json | grep -q "\"$mount/\"" || bao secrets enable -path="$mount" kv-v2 >/dev/null
   bao auth list -format=json | grep -q '"approle/"' || bao auth enable approle >/dev/null
   bao policy write selan - >/dev/null <<EOF
-# The proxy and the gateway read and write their keys under ${PREFIX}, and nothing else.
+# selan-keys reads and writes the company's keys under ${PREFIX}, and nothing else.
 path "$mount/data/$path/*" { capabilities = ["create", "read", "update", "delete"] }
 path "$mount/metadata/$path/*" { capabilities = ["read", "list", "delete"] }
 path "$mount/metadata/$path" { capabilities = ["list"] }
 EOF
-  approle selan-proxy PROXY_ROLE PROXY_SECRET
-  approle selan-gateway GATEWAY_ROLE GATEWAY_SECRET
-  say "AppRoles selan-proxy and selan-gateway may use ${PREFIX}* only."
+  approle selan-keys KEYS_ROLE KEYS_SECRET
+  say "AppRole selan-keys may use ${PREFIX}* only; the proxy and the gateway have no vault identity."
   unset BAO_TOKEN
 }
 
@@ -387,7 +406,7 @@ EOF
 # ---------------------------------------------------------------- up, ready, and not public
 
 start() {
-  step "Starting the proxy and the gateway"
+  step "Starting the proxy, the gateway and selan-keys"
   write_env
   compose config --quiet
   verify_images
@@ -429,25 +448,25 @@ verify_images() {
 wait_ready() {
   local host
   step "Waiting for your server to register with Selan and answer /readyz"
-  for host in "$PROXY_HOST" "$GATEWAY_HOST"; do
+  for host in "$PROXY_HOST" "$GATEWAY_HOST" "$KEYS_HOST"; do
     for i in $(seq 60); do
       curl -fsSk --max-time 5 -o /dev/null --resolve "$host:443:$BIND_ADDR" "https://$host/readyz" 2>/dev/null && break
       [ "$i" = 60 ] && {
-        compose logs --tail 30 proxy gateway >&2 || true
+        compose logs --tail 30 proxy gateway keys >&2 || true
         fail "https://$host/readyz did not answer within 5 minutes"
       }
       sleep 5
     done
     say "https://$host/readyz answers on $BIND_ADDR."
   done
-  # Registered: the one-time token has done its work, so it leaves .env.
-  TOKEN=""
+  # Registered: the one-time tokens have done their work, so they leave .env.
+  TOKEN="" KEYS_TOKEN=""
   write_env
 }
 
 public_ipv4s() {
   local host
-  for host in "$PROXY_HOST" "$GATEWAY_HOST"; do
+  for host in "$PROXY_HOST" "$GATEWAY_HOST" "$KEYS_HOST"; do
     curl -fsS --max-time 10 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$host&type=A" |
       grep -Eo '"data": *"[0-9.]+"' | grep -Eo '[0-9.]+' || true
   done
@@ -508,7 +527,7 @@ check_outside() {
     say ""
     say "WARNING: ${exposed[*]} answers from the internet."
     say "Your proxy and vault must be reachable on your VPN only. Close those ports in your firewall"
-    say "(on Hostinger: hPanel › VPS › Firewall) and make sure $PROXY_HOST and $GATEWAY_HOST resolve to your VPN address."
+    say "(on Hostinger: hPanel › VPS › Firewall) and make sure $PROXY_HOST, $GATEWAY_HOST and $KEYS_HOST resolve to your VPN address."
     say "Port 443 here is published on $BIND_ADDR only; anything else answering is another service on this server."
     exit 2
   fi
