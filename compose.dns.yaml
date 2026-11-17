@@ -1,0 +1,8 @@
+# With SELAN_TLS=dns, install.sh adds this file to COMPOSE_FILE: Caddy proves the names to Let's Encrypt
+# with a DNS-01 challenge, a TXT record it writes through the DNS provider's API, so it needs a way out.
+services:
+  caddy:
+    environment:
+      SELAN_DNS_PROVIDER: ${SELAN_DNS_PROVIDER:?}
+      SELAN_DNS_TOKEN: ${SELAN_DNS_TOKEN:?}
+    networks: [inside, front, egress]

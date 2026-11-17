@@ -1,0 +1,7 @@
+# Written by install.sh, root only. Never commit them.
+/.env
+/.env.tmp
+/openbao-init.json
+/openbao-init.json.tmp
+/certs/*
+!/certs/.gitkeep

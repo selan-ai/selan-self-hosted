@@ -1,0 +1,123 @@
+# Selan's proxy, MCP gateway and selan-keys on a company's own server, with its vault.
+# install.sh writes .env beside this file; README.md says what each part does.
+name: selan
+
+services:
+  proxy:
+    # A release pins its digest here; README, "Upgrade".
+    image: ${SELAN_PROXY_IMAGE:?no selan-proxy release is pinned in this commit yet; README, Upgrade}
+    restart: unless-stopped
+    environment:
+      PROXY_MODE: self-hosted
+      PORT: "8080"
+      PUBLIC_BASE_URL: https://${SELAN_PROXY_HOST:?}
+      CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
+      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
+      SELAN_IDENTITY_DIR: /var/lib/selan-proxy
+      SELAN_REGISTRATION_TOKEN: ${SELAN_REGISTRATION_TOKEN:-}
+      # No vault address or vault identity: every key goes through selan-keys, with this caller's own token.
+      SELAN_KEYS_URL: http://keys:8080
+      SELAN_KEYS_TOKEN: ${PROXY_KEYS_TOKEN:?}
+    volumes:
+      - proxy-identity:/var/lib/selan-proxy
+    networks: [inside, egress]
+
+  gateway:
+    image: ${SELAN_GATEWAY_IMAGE:?no selan-mcp-gateway release is pinned in this commit yet; README, Upgrade}
+    restart: unless-stopped
+    environment:
+      GATEWAY_MODE: self-hosted
+      PORT: "8080"
+      PUBLIC_BASE_URL: https://${SELAN_GATEWAY_HOST:?}
+      CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
+      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
+      SELAN_IDENTITY_DIR: /var/lib/selan-gateway
+      SELAN_REGISTRATION_TOKEN: ${SELAN_REGISTRATION_TOKEN:-}
+      SELAN_KEYS_URL: http://keys:8080
+      SELAN_KEYS_TOKEN: ${GATEWAY_KEYS_TOKEN:?}
+    volumes:
+      - gateway-identity:/var/lib/selan-gateway
+    networks: [inside, egress]
+
+  # selan-keys: the one component that holds a vault identity, an AppRole that reads and writes under
+  # VAULT_PREFIX. The proxy and the gateway ask it with their own token; the admin's browser reaches it at
+  # keys.<domain> through Caddy. It registers with control with a registration token of its own.
+  keys:
+    image: ${SELAN_KEYS_IMAGE:?no selan-keys release is pinned in this commit yet; README, Upgrade}
+    restart: unless-stopped
+    environment:
+      KEYS_MODE: self-hosted
+      PORT: "8080"
+      PUBLIC_BASE_URL: https://${SELAN_KEYS_HOST:?}
+      CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
+      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
+      SELAN_IDENTITY_DIR: /var/lib/selan-keys
+      SELAN_REGISTRATION_TOKEN: ${SELAN_KEYS_REGISTRATION_TOKEN:-}
+      VAULT_ADDR: ${VAULT_ADDR:-http://openbao:8200}
+      VAULT_PREFIX: ${VAULT_PREFIX:-kv/selan/}
+      VAULT_ROLE_ID: ${KEYS_VAULT_ROLE_ID:-}
+      VAULT_SECRET_ID: ${KEYS_VAULT_SECRET_ID:-}
+      # The callers it answers, each by its own token.
+      CALLER_TOKEN_PROXY: ${PROXY_KEYS_TOKEN:?}
+      CALLER_TOKEN_GATEWAY: ${GATEWAY_KEYS_TOKEN:?}
+    volumes:
+      - keys-identity:/var/lib/selan-keys
+    networks: [vault, inside, egress]
+
+  # Only where the company has no Vault of its own: install.sh sets COMPOSE_PROFILES=openbao
+  # when VAULT_ADDR is unset. No ports and no route out; only selan-keys shares its network.
+  openbao:
+    profiles: [openbao]
+    image: quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    restart: unless-stopped
+    command: ["server"]
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+    volumes:
+      - ./openbao.hcl:/openbao/config/openbao.hcl:ro
+      - openbao-data:/openbao/file
+    networks: [vault]
+
+  # TLS on the VPN address. `front` publishes the port but has no NAT, so Caddy cannot reach out, except
+  # with SELAN_TLS=dns, where compose.dns.yaml adds `egress` for Let's Encrypt and the DNS provider's API.
+  # Caddy built with the DNS provider modules (caddy/Dockerfile), signed by this repository's CI.
+  caddy:
+    image: ${SELAN_CADDY_IMAGE:?no Caddy build is pinned in this commit yet; README, Upgrade}
+    restart: unless-stopped
+    environment:
+      SELAN_PROXY_HOST: ${SELAN_PROXY_HOST:?}
+      SELAN_GATEWAY_HOST: ${SELAN_GATEWAY_HOST:?}
+      SELAN_KEYS_HOST: ${SELAN_KEYS_HOST:?}
+      SELAN_TLS: ${SELAN_TLS:?}
+      ALLOWED_CIDRS: ${ALLOWED_CIDRS:-private_ranges}
+    ports:
+      - ${SELAN_BIND_ADDR:?}:443:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+    networks: [inside, front]
+
+networks:
+  # The vault's whole world, shared with selan-keys alone. No route out, and no address on the host.
+  vault:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
+  # Caddy, the proxy, the gateway and selan-keys. No route out, and no address on the host.
+  inside:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
+  # The way out to Selan, the providers and a company's own Vault: the proxy, the gateway and selan-keys.
+  egress: {}
+  front:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  proxy-identity:
+  gateway-identity:
+  keys-identity:
+  openbao-data:
+  caddy-data:
