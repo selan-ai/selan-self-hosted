@@ -93,6 +93,8 @@ it without systemd. Pass the ones you set through sudo:
 | `VAULT_ADDR`, `VAULT_PREFIX` | your own Vault, and the path its keys live under (`kv/selan/`) |
 | `KEYS_VAULT_ROLE_ID`, `KEYS_VAULT_SECRET_ID` | with `own`: selan-keys' AppRole on your Vault |
 | `SELAN_OUTSIDE_CHECK` | `no` skips the check from the internet |
+| `SELAN_PUBLIC_DNS`, `SELAN_CHECK_HOST` | where that check asks: `https://1.1.1.1` (DNS over HTTPS) and `https://check-host.net` by default |
+| `SELAN_READY_TIMEOUT` | seconds to wait for each `/readyz`, 300 by default (OpenBao: 120) |
 | `SELAN_NONINTERACTIVE` | `1` never asks: a missing setting fails, naming its variable. Without a terminal it never asks either |
 
 ## TLS on a private name
@@ -215,15 +217,28 @@ Both show the tag, `compose.yaml` and `install.sh` first, ask which TLS to use, 
 Claude never sees a token or the vault's material. They finish with one real request through the
 proxy.
 
-## Checks
+## Tests
 
-`.github/workflows/check.yml` runs shellcheck and actionlint, validates `compose.yaml` (with OpenBao, with
-your own Vault, with DNS-01) and the `Caddyfile` in every TLS mode and with every DNS provider, checks
-every image is pinned to a digest that exists, and runs `ci/dind-test.sh`: a fresh Ubuntu 24.04 container
-with its own Docker daemon, this commit cloned to `/opt/selan`, and `ci/stack-test.sh` in it, where `install.sh`
-installs Docker, answers everything from the environment and brings the
-stack up with OpenBao, stand-ins for the proxy, the gateway and selan-keys (until their images are pinned) and a
-fake control, and the test asserts OpenBao's signature was checked and a wrong signer refused, `/readyz`,
-one `RegisterServer` per component carrying its Ed25519 and X25519 public keys (as selan-proto has it),
-the file modes, that only selan-keys reaches the vault (the proxy and gateway have no `VAULT_` setting and
-no route to it), that the vault and Caddy have no way out, that a second run changes nothing, and that OpenBao comes back after a restart.
+`.github/workflows/check.yml` runs shellcheck and actionlint, validates `compose.yaml` (with OpenBao, your
+own Vault and DNS-01) and the `Caddyfile` in every TLS mode and with every DNS provider, and checks every
+image is pinned to a digest that exists. Then it runs each case below on its own fresh host with its own
+Docker daemon (`ci/dind-test.sh <case>`): a privileged container with git alone, this commit cloned to
+`/opt/selan`, where `install.sh` installs Docker itself and gets every answer from the environment, as
+selan-proxy-e2e installs it. The proxy, the gateway and selan-keys are stand-ins until their images are
+pinned, and control is a fake (`ci/fake_control.py`).
+
+Coverage is counted by paths, not lines: `install.sh` runs traced, and `ci/paths.py` fails the build unless
+every command line ran in some case and every `fail` ran as a refusal. Run the cases locally with
+`bash ci/dind-test.sh <case>`, then `python3 ci/paths.py ci-out/paths-*.txt`.
+
+| Case | Host | What it proves |
+|---|---|---|
+| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: OpenBao's cosign signature checked, three registrations with Ed25519 and X25519 public keys, files root 0600, only selan-keys reaches the vault, the vault and Caddy have no way out; a re-run changes nothing; a **sealed vault** after a restart is unsealed by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data and one without a root token are refused |
+| `own-vault` | Ubuntu 24.04 | **your own Vault** (an OpenBao dev server standing in): no OpenBao runs, the Vault's policies, auth methods and AppRole are unchanged, selan-keys reads and writes through it; a missing or malformed address, role id or secret id is refused; a re-run changes nothing |
+| `dns` | Ubuntu 24.04 | **DNS-01**: an unknown provider and a missing or malformed token are refused; with Caddy built from `caddy/`, Caddy gets a way out and asks the provider's API for the challenge record (CI's token is refused there, so no certificate); the token stays out of output, Caddy's log and its saved config; `install.sh` fails plainly when `/readyz` does not come |
+| `own-ca` | Ubuntu 24.04 | **your own CA**: missing paths, missing files and files that are not PEM are refused; every name answers with that CA's certificate, checked against it alone; re-runs change nothing |
+| `tokens` | Ubuntu 24.04 | a first run with a registration **token missing** or malformed is refused before anything is written; with both **present** it registers and the tokens leave `.env`; caller tokens are kept on a re-run; a broken one in `.env` is refused |
+| `outside` | Ubuntu 24.04 | at a tag `install.sh` names it; the check from outside, against stand-ins for public DNS and check-host.net: a **public address that answers is refused with exit 2**, naming only the ports that answer; closed ports, a checker that does not answer, and no public address are each said; `SELAN_OUTSIDE_CHECK=no` skips it |
+| `refusals` | Ubuntu 24.04 | every malformed or missing setting is refused, naming its variable; on a terminal every question is asked and kept, secrets unseen; a release without a codename; a VPN address found on `wg0`; non-root, a copy outside a checkout, a checkout elsewhere; unpinned and unknown images; an OpenBao and a Docker that will not start |
+| `systemd` | Ubuntu 24.04 booted by systemd | a stopped Docker started with systemctl; `selan-unseal.service` installed; after a **reboot** the stack is back and OpenBao is unsealed with nobody's hands |
+| `no-debian` | Alpine | outside Debian and Ubuntu `install.sh` installs nothing and says to install curl, then Docker with the compose plugin |

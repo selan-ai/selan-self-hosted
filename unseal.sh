@@ -5,7 +5,8 @@ set -euo pipefail
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 init="$dir/openbao-init.json"
-bao() { docker compose --project-directory "$dir" exec -T openbao bao "$@"; }
+# The container by its name, not through compose: at boot nothing else of the stack's settings is needed.
+bao() { docker exec -i selan-openbao-1 bao "$@"; }
 
 [ "$(id -u)" = 0 ] || { echo "error: run as root" >&2; exit 1; }
 [ -f "$init" ] || { echo "error: $init is missing; OpenBao cannot be unsealed without it" >&2; exit 1; }

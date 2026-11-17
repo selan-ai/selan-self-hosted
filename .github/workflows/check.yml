@@ -89,19 +89,48 @@ jobs:
       - name: every image pinned by digest, and every digest real
         run: ci/check-pins.sh
 
-  stack:
+  # Each case on a fresh host with its own Docker daemon (ci/dind-test.sh); README, "Tests", lists them.
+  case:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [openbao, own-vault, dns, own-ca, tokens, outside, refusals, systemd, no-debian]
     steps:
       - uses: actions/checkout@v4
 
-      - name: install.sh on a fresh Ubuntu with its own Docker daemon, with OpenBao and a fake control
-        run: bash ci/dind-test.sh
+      - name: ${{ matrix.case }}
+        run: bash ci/dind-test.sh "${{ matrix.case }}"
+
+      - name: the paths install.sh took
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paths-${{ matrix.case }}
+          path: ci-out/paths-${{ matrix.case }}.txt
+          if-no-files-found: error
 
       - name: logs
         if: failure()
         run: |
-          docker exec selan-ci-ubuntu bash -c 'tail -n 40 /var/log/docker.log; cd /opt/selan &&
+          docker exec "selan-ci-${{ matrix.case }}" bash -c 'tail -n 40 /var/log/docker.log 2>/dev/null; cd /opt/selan &&
             export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused &&
             export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml" &&
             docker compose --project-directory "$PWD" --profile openbao logs --tail 80' || true
+
+  # Every path of install.sh taken by some case: every command line ran, and every `fail` ran as one.
+  paths:
+    needs: case
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: paths-*
+          path: ci-out
+          merge-multiple: true
+
+      - name: path coverage of install.sh
+        run: python3 -I ci/paths.py ci-out/paths-*.txt
