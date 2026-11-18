@@ -47,15 +47,16 @@ jobs:
         run: |
           docker compose --env-file .env.example config --quiet
           docker compose --env-file .env.example --profile openbao config --quiet
-          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway keys openbao postgres proxy '
+          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway keys openbao postgres proxy unseal '
           export SELAN_TLS=dns SELAN_DNS_PROVIDER=hetzner SELAN_DNS_TOKEN=ci-not-a-token
           dns=(docker compose --env-file .env.example -f compose.yaml -f compose.dns.yaml)
           "${dns[@]}" config --quiet
           "${dns[@]}" config --format json | jq -e '.services.caddy.networks | has("egress")' >/dev/null
           docker compose --env-file .env.example config --format json | jq -e '.services.caddy.networks | has("egress") | not' >/dev/null
-          # Only selan-keys has a vault identity, and only it shares a network with the vault.
+          # Only selan-keys has a vault identity; only it and the unseal service share a network with the vault.
           base=$(docker compose --env-file .env.example --profile openbao config --format json)
-          jq -e '[.services[] | select(.networks | has("vault"))] | length == 2' <<<"$base" >/dev/null
+          jq -e '[.services | to_entries[] | select(.value.networks | has("vault")) | .key] | sort == ["keys", "openbao", "unseal"]' <<<"$base" >/dev/null
+          jq -e '(.services.unseal.networks | keys) == ["vault"] and (.services.unseal.ports // [] | length) == 0' <<<"$base" >/dev/null
           jq -e '.services.keys.networks | has("vault")' <<<"$base" >/dev/null
           jq -e '[.services.proxy, .services.gateway, .services.caddy, .services.postgres | .environment | keys[] | select(startswith("VAULT_"))] | length == 0' <<<"$base" >/dev/null
           # Only the gateway shares a network with its database.

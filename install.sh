@@ -453,7 +453,7 @@ approle() {
 # The unseal key alone, for the `unseal` service to read: root's, mode 0600, beside openbao-init.json.
 unseal_key() {
   local file="$DIR/openbao-unseal.key" key
-  key=$(grep -A1 '"unseal_keys_b64"' "$1" | tail -n 1 | tr -d ' ",')
+  key=$({ grep -A1 '"unseal_keys_b64"' "$1" || true; } | tail -n 1 | tr -d ' ",')
   [[ "$key" =~ ^[A-Za-z0-9+/=]+$ ]] || fail "no unseal key in $1"
   printf '%s\n' "$key" >"$file.tmp"
   chmod 0600 "$file.tmp"
