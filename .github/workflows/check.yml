@@ -91,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [openbao, own-vault, dns, own-ca, tokens, outside, refusals, systemd, no-debian]
+        case: [openbao, own-vault, dns, own-ca, tokens, outside, refusals, systemd, no-debian, upgrade]
     steps:
       - uses: actions/checkout@v4
 

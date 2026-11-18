@@ -442,10 +442,14 @@ openbao() {
   [ -n "$BAO_TOKEN" ] || fail "no root token in $init"
   export BAO_TOKEN
 
-  local mount=${PREFIX%%/*} path=${PREFIX#*/}
+  local mount=${PREFIX%%/*} path=${PREFIX#*/} mounts methods
   path=${path%/}
-  bao secrets list -format=json | grep -q "\"$mount/\"" || bao secrets enable -path="$mount" kv-v2 >/dev/null
-  bao auth list -format=json | grep -q '"approle/"' || bao auth enable approle >/dev/null
+  # Read whole, then matched: `| grep -q` leaves at the match, and under pipefail the listing's broken pipe
+  # read as "not there", so 0.2.5's upgrade enabled kv/ again and stopped at "path is already in use".
+  mounts=$(bao secrets list -format=json)
+  [[ "$mounts" == *"\"$mount/\":"* ]] || bao secrets enable -path="$mount" kv-v2 >/dev/null
+  methods=$(bao auth list -format=json)
+  [[ "$methods" == *'"approle/":'* ]] || bao auth enable approle >/dev/null
   bao policy write selan - >/dev/null <<EOF
 # selan-keys reads and writes the company's keys under ${PREFIX}, and nothing else.
 path "$mount/data/$path/*" { capabilities = ["create", "read", "update", "delete"] }
