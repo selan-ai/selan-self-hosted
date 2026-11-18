@@ -117,6 +117,22 @@ services:
       - openbao-data:/openbao/file
     networks: [vault]
 
+  # Unseals OpenBao whenever it answers sealed, so a crash, a restart or an upgrade does not leave the company
+  # down until somebody unseals it. Root in its own container only to read the root-only key file; no route out.
+  unseal:
+    profiles: [openbao]
+    image: quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    restart: unless-stopped
+    user: "0"
+    entrypoint: ["/bin/sh", "/unseal-watch.sh"]
+    environment:
+      BAO_ADDR: http://openbao:8200
+    volumes:
+      - ./unseal-watch.sh:/unseal-watch.sh:ro
+      - ./openbao-unseal.key:/run/selan/openbao-unseal.key:ro
+    depends_on: [openbao]
+    networks: [vault]
+
   # TLS on the VPN address. `front` publishes the port but has no NAT, so Caddy cannot reach out, except
   # with SELAN_TLS=dns, where compose.dns.yaml adds `egress` for Let's Encrypt and the DNS provider's API.
   # Caddy built with the DNS provider modules (caddy/Dockerfile), signed by this repository's CI.

@@ -3,6 +3,8 @@
 /.env.tmp
 /openbao-init.json
 /openbao-init.json.tmp
+/openbao-unseal.key
+/openbao-unseal.key.tmp
 /certs/*
 !/certs/.gitkeep
 /ci-out/

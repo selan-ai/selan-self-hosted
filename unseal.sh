@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unseals the OpenBao this stack runs, with the key install.sh wrote to openbao-init.json.
-# OpenBao starts sealed after every restart; install.sh runs this, and so does selan-unseal.service at boot.
+# OpenBao starts sealed after every restart; the `unseal` service unseals it, and install.sh and a person run this.
 set -euo pipefail
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
