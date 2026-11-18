@@ -1,5 +1,5 @@
 # Sourced by each case in ci/cases/: run as root in a fresh container from ci/dind-test.sh, at /opt/selan.
-# Stand-ins for the proxy, the gateway and selan-keys, a fake control, and every answer install.sh needs
+# The real proxy, gateway and selan-keys against a fake control, and every answer install.sh needs
 # from the environment. install.sh runs traced, so ci/paths.py can tell which of its paths a case took.
 # shellcheck shell=bash
 set -euo pipefail
@@ -12,29 +12,30 @@ fail() {
 }
 pass() { printf 'ok: %s\n' "$*"; }
 
-stand_in=python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
+# A probe, never part of the stack: python for socket checks and CI's fakes, curl for HTTP from a network.
+probe=python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
 export curl_image=curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
-stock_caddy=caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
-caddy_image=""
-# Until a Caddy build is pinned, stock Caddy serves SELAN_TLS=internal and files; the dns case loads ours.
-if grep -qF "image: \${SELAN_CADDY_IMAGE:?" compose.yaml; then
-  caddy_image=$stock_caddy
-  export SELAN_CADDY_IMAGE=$caddy_image
-fi
-export SELAN_PROXY_IMAGE=$stand_in SELAN_GATEWAY_IMAGE=$stand_in SELAN_KEYS_IMAGE=$stand_in
-# The stand-ins, and Caddy before ours is published, are not signed: everything else is checked.
-export SELAN_UNSIGNED_OK="$stand_in $caddy_image"
+# The fake control alone runs unsigned (python, CI's own): every image of the stack is checked.
+export SELAN_UNSIGNED_OK=$probe
 export COMPOSE_FILE="$root/compose.yaml:$root/ci/compose.ci.yaml"
 export SELAN_REGISTRATION_TOKEN=selanreg_ci-stack-test SELAN_KEYS_REGISTRATION_TOKEN=selanreg_ci-keys-stack-test
 export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_VAULT=openbao
-export CONTROL_BASE_URL=http://fake-control:8080 SELAN_OUTSIDE_CHECK=no SELAN_NONINTERACTIVE=1
+export CONTROL_BASE_URL=https://fake-control:8443 SELAN_OUTSIDE_CHECK=no SELAN_NONINTERACTIVE=1
 
 compose() { docker compose --project-directory "$root" "$@"; }
 mode() { stat -c '%U %a' "$1"; }
 ip_on() { docker inspect -f "{{(index .NetworkSettings.Networks \"selan_$2\").IPAddress}}" "selan-$1-1"; }
-reaches() { # reaches <container> <host> <port>: a TCP connect from inside a container
-  compose exec -T "$1" python -c "import socket; socket.create_connection(('$2', $3), timeout=4)" >/dev/null 2>&1
+reaches() { # reaches <container> <host> <port>: a TCP connect from inside a container's own network namespace
+  docker run --rm --network "container:selan-$1-1" "$probe" \
+    python -c "import socket; socket.create_connection(('$2', $3), timeout=4)" >/dev/null 2>&1
 }
+# key_read <caller token> <name>: selan-keys' answer to GET /v1/keys/<name> from `inside`, then its status.
+# The token goes in on stdin, never on a command line.
+key_read() {
+  printf 'Authorization: Bearer %s\n' "$1" |
+    docker run --rm -i --network selan_inside "$curl_image" -s -H @- -w ' %{http_code}' "http://keys:8080/v1/keys/$2"
+}
+saved() { sed -n "s/^$1='\(.*\)'$/\1/p" .env; }
 control_log() { compose logs --no-log-prefix fake-control; }
 ready() { # ready <name> [curl options]: https://<name>.selan-ci.test/readyz answers 200 through Caddy
   local host=$1.selan-ci.test

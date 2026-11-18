@@ -30,16 +30,19 @@ refused 1 'VAULT_PREFIX is a path ending in /' VAULT_PREFIX=kv/selan
 pass "each malformed or missing setting is refused, naming its variable"
 
 own=(SELAN_VAULT=own VAULT_ADDR=http://127.0.0.1:1 KEYS_VAULT_ROLE_ID=role KEYS_VAULT_SECRET_ID=secret)
-refused 1 'python:3.13-alpine is not pinned by digest' "${own[@]}" SELAN_PROXY_IMAGE=python:3.13-alpine
-refused 1 'signers.txt names nobody who signs docker.io/library/python' "${own[@]}" \
-  SELAN_PROXY_IMAGE=docker.io/library/python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
+# The proxy's image swapped for one install.sh must refuse (ci/compose.image.yaml), so nothing starts.
+swap="COMPOSE_FILE=$COMPOSE_FILE:$root/ci/compose.image.yaml"
+unpinned=("$swap" CI_PROXY_IMAGE=python:3.13-alpine)
+refused 1 'python:3.13-alpine is not pinned by digest' "${own[@]}" "${unpinned[@]}"
+refused 1 'signers.txt names nobody who signs docker.io/library/python' "${own[@]}" "$swap" \
+  CI_PROXY_IMAGE=docker.io/library/python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
 pass "an image that is not pinned, or that signers.txt names no signer for, is refused before anything runs"
 
 apt-get install -y -qq iproute2 >/dev/null
 ip link add wg0 type veth peer name wg0-peer
 ip addr add 100.64.0.9/32 dev wg0
 rm -f .env
-refused 1 'is not pinned by digest' -u SELAN_BIND_ADDR "${own[@]}" SELAN_PROXY_IMAGE=python:3.13-alpine
+refused 1 'is not pinned by digest' -u SELAN_BIND_ADDR "${own[@]}" "${unpinned[@]}"
 grep -q 'listens  100.64.0.9:443' /tmp/refused.log || fail "the address on wg0 was not found"
 ip link del wg0
 pass "without SELAN_BIND_ADDR the address on a VPN interface (wg0) is used"
@@ -67,7 +70,7 @@ asked() { # asked <answers> [env ...]: install.sh on a pseudo-terminal, each ans
     env -u SELAN_NONINTERACTIVE "$@" script -qefc "bash $root/ci/traced-install.sh" /tmp/asked.log >/dev/null 2>&1 || true
 }
 asked 'gw.asked.test\n10.9.8.7\ndns\nhetzner\nasked-dns-token\nown\nhttp://127.0.0.1:1\nasked-role\nasked-secret\n' \
-  -u SELAN_PROXY_HOST -u SELAN_BIND_ADDR -u SELAN_TLS -u SELAN_VAULT SELAN_PROXY_IMAGE=python:3.13-alpine
+  -u SELAN_PROXY_HOST -u SELAN_BIND_ADDR -u SELAN_TLS -u SELAN_VAULT "${unpinned[@]}"
 for line in "SELAN_PROXY_HOST='gw.asked.test'" "SELAN_BIND_ADDR='10.9.8.7'" "SELAN_TLS='dns'" "SELAN_DNS_PROVIDER='hetzner'" \
   "SELAN_DNS_TOKEN='asked-dns-token'" "SELAN_VAULT='own'" "VAULT_ADDR='http://127.0.0.1:1'" \
   "KEYS_VAULT_ROLE_ID='asked-role'" "KEYS_VAULT_SECRET_ID='asked-secret'"; do
@@ -76,7 +79,7 @@ done
 ! grep -q 'asked-dns-token\|asked-secret' /tmp/asked.log || fail "a secret answer was shown on the terminal"
 mkdir -p /tmp/pem && printf -- '-----BEGIN CERTIFICATE-----\n' >/tmp/pem/c.pem && printf -- '-----BEGIN PRIVATE KEY-----\n' >/tmp/pem/k.pem
 rm -f certs/*.pem
-asked '/tmp/pem/c.pem\n/tmp/pem/k.pem\n' SELAN_TLS=files "${own[@]}" SELAN_PROXY_IMAGE=python:3.13-alpine
+asked '/tmp/pem/c.pem\n/tmp/pem/k.pem\n' SELAN_TLS=files "${own[@]}" "${unpinned[@]}"
 if ! cmp -s /tmp/pem/c.pem certs/fullchain.pem || ! cmp -s /tmp/pem/k.pem certs/privkey.pem; then
   fail "the asked certificate paths were not copied in"
 fi

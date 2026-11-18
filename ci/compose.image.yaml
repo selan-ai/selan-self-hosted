@@ -1,0 +1,4 @@
+# CI only: the proxy's image replaced by CI_PROXY_IMAGE, for install.sh's refusals of an unpinned or unknown image.
+services:
+  proxy:
+    image: ${CI_PROXY_IMAGE:?}

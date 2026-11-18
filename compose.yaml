@@ -4,53 +4,92 @@ name: selan
 
 services:
   proxy:
-    # A release pins its digest here; README, "Upgrade".
-    image: ${SELAN_PROXY_IMAGE:?no selan-proxy release is pinned in this commit yet; README, Upgrade}
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-proxy:0.1.0@sha256:1119c47af44f904bb6d559acca559e793dbfb916d489310d8513b40bfc1a6534
     restart: unless-stopped
     environment:
       PROXY_MODE: self-hosted
       PORT: "8080"
       PUBLIC_BASE_URL: https://${SELAN_PROXY_HOST:?}
       CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
-      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
       SELAN_IDENTITY_DIR: /var/lib/selan-proxy
-      SELAN_REGISTRATION_TOKEN: ${SELAN_REGISTRATION_TOKEN:-}
+      # Passed only while install.sh has it: the proxy refuses a blank one, and .env drops it once registered.
+      SELAN_REGISTRATION_TOKEN:
       # No vault address or vault identity: every key goes through selan-keys, with this caller's own token.
       SELAN_KEYS_URL: http://keys:8080
       SELAN_KEYS_TOKEN: ${PROXY_KEYS_TOKEN:?}
+      # No ALLOWED_CIDRS here: the proxy publishes no port, and Caddy refuses a client outside them first.
     volumes:
       - proxy-identity:/var/lib/selan-proxy
     networks: [inside, egress]
 
+  # The gateway also reads every variable of Selan's own (its README, "Self-hosted mode"): those its connectors
+  # on Google Cloud need are not mounted here, so they get fixed stand-ins. GitLab, GitHub and Slack sign-ins
+  # need OAuth apps of the company's own, which this release does not configure.
   gateway:
-    image: ${SELAN_GATEWAY_IMAGE:?no selan-mcp-gateway release is pinned in this commit yet; README, Upgrade}
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-mcp-gateway:0.1.0@sha256:6d37d624d6ad6257a31e52c3827a7ae8e794a871b538644fc18ff21b06a01e01
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       GATEWAY_MODE: self-hosted
       PORT: "8080"
       PUBLIC_BASE_URL: https://${SELAN_GATEWAY_HOST:?}
       CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
-      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
-      SELAN_IDENTITY_DIR: /var/lib/selan-gateway
-      SELAN_REGISTRATION_TOKEN: ${SELAN_REGISTRATION_TOKEN:-}
+      AUTH_SERVER_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
+      REACTOR_URL: https://reactor.selan.ai
+      # The image's distroless home, owned by its user: a new volume there is writable by it.
+      SELAN_IDENTITY_DIR: /home/nonroot
+      SELAN_REGISTRATION_TOKEN:
       SELAN_KEYS_URL: http://keys:8080
       SELAN_KEYS_TOKEN: ${GATEWAY_KEYS_TOKEN:?}
+      GATEWAY_DATABASE_URL: postgresql://gateway:${GATEWAY_DB_PASSWORD:?}@postgres:5432/gateway?sslmode=disable
+      MCP_KNOWN_CLIENT_REDIRECTS: https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+      # Read, and unused on an own server: nothing is sealed with it, and Caddy strips X-Selan-Edge.
+      GATEWAY_ENCRYPTION_KEY: unused-on-an-own-server
+      EDGE_SECRET: unused-on-an-own-server
+      FIREBASE_MCP_URL: https://unused.invalid
+      ADMIN_SA_EMAIL: unused@unused.invalid
+      GITLAB_CLIENT_ID: not-configured
+      GITLAB_CLIENT_SECRET: not-configured
+      GITHUB_CLIENT_ID: not-configured
+      GITHUB_CLIENT_SECRET: not-configured
+      SLACK_CLIENT_ID: not-configured
+      SLACK_CLIENT_SECRET: not-configured
     volumes:
-      - gateway-identity:/var/lib/selan-gateway
-    networks: [inside, egress]
+      - gateway-identity:/home/nonroot
+    networks: [inside, egress, gateway-db]
+
+  # The gateway's own database: its sign-ins' rows (each secret itself is kept at selan-keys). Reached by the
+  # gateway alone, on a network with no route out. Postgres publishes no signature; it is pinned by digest.
+  postgres:
+    image: docker.io/library/postgres:18.7-alpine@sha256:b6972e1115a4ff8eba5d7f7d19184926d1e16d7d1136ae1e1a7ebf286da0f015
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_DB: gateway
+      POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD:?}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-h", "127.0.0.1", "-U", "gateway", "-d", "gateway"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    volumes:
+      - gateway-db:/var/lib/postgresql
+    networks: [gateway-db]
 
   # selan-keys: the one component that holds a vault identity, an AppRole that reads and writes under
   # VAULT_PREFIX. The proxy and the gateway ask it with their own token; the admin's browser reaches it at
   # keys.<domain> through Caddy. It registers with control with a registration token of its own.
   keys:
-    image: ${SELAN_KEYS_IMAGE:?no selan-keys release is pinned in this commit yet; README, Upgrade}
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-keys:0.1.2@sha256:aed899521c83c0072673cb8d17ebba7898c408e01da20ac98371f4c75426e572
     restart: unless-stopped
     environment:
-      KEYS_MODE: self-hosted
       PORT: "8080"
+      # Selan's screen in the admin's browser (control.selan.ai, its only CORS origin) calls this one, via Caddy.
+      ADMIN_PORT: "8081"
       PUBLIC_BASE_URL: https://${SELAN_KEYS_HOST:?}
       CONTROL_BASE_URL: ${CONTROL_BASE_URL:-https://control.selan.ai}
-      AUTH_BASE_URL: ${AUTH_BASE_URL:-https://auth.selan.ai}
       SELAN_IDENTITY_DIR: /var/lib/selan-keys
       SELAN_REGISTRATION_TOKEN: ${SELAN_KEYS_REGISTRATION_TOKEN:-}
       VAULT_ADDR: ${VAULT_ADDR:-http://openbao:8200}
@@ -58,8 +97,8 @@ services:
       VAULT_ROLE_ID: ${KEYS_VAULT_ROLE_ID:-}
       VAULT_SECRET_ID: ${KEYS_VAULT_SECRET_ID:-}
       # The callers it answers, each by its own token.
-      CALLER_TOKEN_PROXY: ${PROXY_KEYS_TOKEN:?}
-      CALLER_TOKEN_GATEWAY: ${GATEWAY_KEYS_TOKEN:?}
+      KEYS_PROXY_TOKEN: ${PROXY_KEYS_TOKEN:?}
+      KEYS_GATEWAY_TOKEN: ${GATEWAY_KEYS_TOKEN:?}
     volumes:
       - keys-identity:/var/lib/selan-keys
     networks: [vault, inside, egress]
@@ -109,6 +148,11 @@ networks:
     internal: true
     driver_opts:
       com.docker.network.bridge.inhibit_ipv4: "true"
+  # The gateway and its Postgres alone. No route out, and no address on the host.
+  gateway-db:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
   # The way out to Selan, the providers and a company's own Vault: the proxy, the gateway and selan-keys.
   egress: {}
   front:
@@ -118,6 +162,7 @@ networks:
 volumes:
   proxy-identity:
   gateway-identity:
+  gateway-db:
   keys-identity:
   openbao-data:
   caddy-data:

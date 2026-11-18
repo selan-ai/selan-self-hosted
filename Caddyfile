@@ -39,11 +39,19 @@
 {$SELAN_GATEWAY_HOST} {
 	import tls-{$SELAN_TLS}
 	import only-allowed
-	reverse_proxy gateway:8080
+	# Selan's load balancer's header; on an own server nobody may claim to be it.
+	reverse_proxy gateway:8080 {
+		header_up -X-Selan-Edge
+	}
 }
 
+# Selan's screen in the admin's browser calls the admin API, on 8081; 8080, where the proxy and the gateway read
+# keys with their own tokens, answers only its /readyz here.
 {$SELAN_KEYS_HOST} {
 	import tls-{$SELAN_TLS}
 	import only-allowed
-	reverse_proxy keys:8080
+	@neither not path /readyz /selan/*
+	respond @neither 404
+	reverse_proxy /readyz keys:8080
+	reverse_proxy /selan/* keys:8081
 }

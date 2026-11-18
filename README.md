@@ -31,13 +31,14 @@ It needs `git` (`apt-get install -y git`) and a user that can write `/opt`: as a
 | Where | What | Talks to |
 |---|---|---|
 | Your server, `inside` and `egress` networks | `proxy`: selan-proxy, the endpoint your developers' Claude Code, Codex and Desktop use (`gw.<your domain>`) | Selan's auth and control, the providers, selan-keys |
-| Your server, `inside` and `egress` networks | `gateway`: selan-mcp-gateway, for MCP connectors (`mcp.<your domain>`) | Selan's auth and control, the connectors, selan-keys |
-| Your server, `vault`, `inside` and `egress` networks | `keys`: selan-keys, the only part with a vault identity; your admins add keys in the browser at `keys.<your domain>` | your vault, Selan's auth and control |
+| Your server, `inside`, `egress` and `gateway-db` networks | `gateway`: selan-mcp-gateway, for MCP connectors (`mcp.<your domain>`) | Selan's auth and control, the connectors, selan-keys, its Postgres |
+| Your server, `gateway-db` only | `postgres`: the gateway's database, its sign-ins' rows (every secret itself is kept at selan-keys) | nobody: no ports, no route out |
+| Your server, `vault`, `inside` and `egress` networks | `keys`: selan-keys, the only part with a vault identity; your admins add keys in the browser at `keys.<your domain>`, which reaches only its admin API (port 8081) and `/readyz` | your vault, Selan's auth and control |
 | Your server, `vault` only | `openbao`: OpenBao, when you have no Vault of your own | nobody: no ports, no route out |
 | Your server, `inside` and `front` | `caddy`: TLS for the three names on your VPN address, port 443 | the proxy, the gateway and selan-keys |
 | Selan | auth, control (who may use which key, budgets, rotation, usage), the console | nothing on your side: your server calls Selan, never the other way |
 
-`vault` and `inside` are internal Docker networks with no route out and no address on the host. The
+`vault`, `inside` and `gateway-db` are internal Docker networks with no route out and no address on the host. The
 vault shares `vault` with selan-keys alone, so it answers nothing else: the proxy and the gateway have no
 vault address and no vault identity, and read a key from selan-keys with a token of their own that
 `install.sh` makes for each (`PROXY_KEYS_TOKEN`, `GATEWAY_KEYS_TOKEN` in `.env`). `front` publishes Caddy's port on your VPN address and has no
@@ -48,7 +49,7 @@ allow only Selan and the providers built into their image, and selan-keys calls 
 | File | |
 |---|---|
 | [`install.sh`](install.sh) | checks Docker (installs it on Debian or Ubuntu), writes `.env`, sets up the vault, checks every image's cosign signature, starts the stack, waits for `/readyz`, checks nothing answers from the internet. Makes a selan-keys token per caller. It runs from the checkout it is in and fetches nothing else |
-| [`compose.yaml`](compose.yaml) | the five services and four networks, every image pinned by digest |
+| [`compose.yaml`](compose.yaml) | the six services and five networks, every image pinned by digest |
 | [`compose.dns.yaml`](compose.dns.yaml) | with `SELAN_TLS=dns` only: gives Caddy a way out, to Let's Encrypt and your DNS provider |
 | [`signers.txt`](signers.txt) | who must have signed each image, checked with cosign before it runs |
 | [`Caddyfile`](Caddyfile) | TLS, and a 403 for any client outside `ALLOWED_CIDRS` |
@@ -88,13 +89,13 @@ it without systemd. Pass the ones you set through sudo:
 | `SELAN_TLS` | `dns` or `files`; asked when unset. See "TLS on a private name" |
 | `SELAN_DNS_PROVIDER`, `SELAN_DNS_TOKEN` | with `dns`: the provider, and an API token that may edit TXT records in your zone; kept in `.env` only |
 | `SELAN_TLS_CERT`, `SELAN_TLS_KEY` | with `files`: paths to your CA's certificate chain and its key, copied into `/opt/selan/certs/` |
-| `ALLOWED_CIDRS` | who Caddy lets in: `private_ranges` (the default) or CIDRs separated by spaces |
+| `ALLOWED_CIDRS` | who Caddy lets in: `private_ranges` and CIDRs, separated by spaces; `private_ranges 100.64.0.0/10` by default, since Caddy's `private_ranges` leaves out Tailscale's 100.64.0.0/10 |
 | `SELAN_VAULT` | `openbao` (started on this server) or `own`; `own` when `VAULT_ADDR` is set, asked otherwise |
 | `VAULT_ADDR`, `VAULT_PREFIX` | your own Vault, and the path its keys live under (`kv/selan/`) |
 | `KEYS_VAULT_ROLE_ID`, `KEYS_VAULT_SECRET_ID` | with `own`: selan-keys' AppRole on your Vault |
 | `SELAN_OUTSIDE_CHECK` | `no` skips the check from the internet |
 | `SELAN_PUBLIC_DNS`, `SELAN_CHECK_HOST` | where that check asks: `https://1.1.1.1` (DNS over HTTPS) and `https://check-host.net` by default |
-| `SELAN_READY_TIMEOUT` | seconds to wait for each `/readyz`, 300 by default (OpenBao: 120) |
+| `SELAN_READY_TIMEOUT` | seconds to wait for each `/readyz`, 300 by default (OpenBao: 120). selan-keys starts and answers first: the proxy asks it as it starts, then every five minutes |
 | `SELAN_NONINTERACTIVE` | `1` never asks: a missing setting fails, naming its variable. Without a terminal it never asks either |
 
 ## TLS on a private name
@@ -158,15 +159,22 @@ against the signer [`signers.txt`](signers.txt) names: selan-proxy, selan-mcp-ga
 `europe-docker.pkg.dev/selan-prod/selan-public/<image>`, signed keylessly by their own GitLab CI at a
 release tag; Caddy is `europe-docker.pkg.dev/selan-prod/selan-public/caddy` too, built from [`caddy/Dockerfile`](caddy/Dockerfile)
 and signed by this repository's `caddy-image` workflow on `main`; OpenBao is signed by OpenBao's
-release workflow. To check one yourself:
+release workflow. Postgres, the gateway's database, is the one image whose publisher signs none: `signers.txt`
+says `unsigned` for it, and `install.sh` runs it by the digest pinned here alone. To check one yourself:
 
 ```sh
 cosign verify --certificate-identity-regexp '<identity from signers.txt>' \
   --certificate-oidc-issuer '<issuer from signers.txt>' <image>@sha256:…
 ```
 
-Until the first release of each, `compose.yaml` names it as `${SELAN_PROXY_IMAGE:?…}`,
-`${SELAN_GATEWAY_IMAGE:?…}` or `${SELAN_KEYS_IMAGE:?…}`, which refuses to start: there is nothing to run yet.
+## Known gaps
+
+- **The gateway does not start against Selan yet.** selan-mcp-gateway 0.1.0 asks selan-auth at boot, with
+  its own server's signed token, and selan-auth takes no server's token yet, so the gateway exits and
+  `install.sh` stops at `mcp.<your domain>/readyz`. The proxy and selan-keys are unaffected. CI's fake control
+  answers that lookup as selan-auth will.
+- **GitLab, GitHub and Slack sign-ins** through your gateway need OAuth apps of your own, which this release
+  does not configure; `compose.yaml` gives the gateway stand-ins for them.
 
 ## Backups
 
@@ -176,9 +184,10 @@ Selan cannot see your backups, disks, vault or VPN. Keep, off the server:
 - the `selan_openbao-data` volume, OpenBao's data; stop OpenBao first, or use `bao operator raft snapshot save`:
   `docker run --rm -v selan_openbao-data:/d -v "$PWD:/b" alpine tar czf /b/openbao-data.tgz -C /d .`;
 - `selan_proxy-identity`, `selan_gateway-identity` and `selan_keys-identity`: each component's Ed25519 key pair, which signs its
-  calls to Selan, and X25519 key pair, which existing keys are sealed to when Selan hands them over. Both
-  are made on first start; only their public halves are sent, in `RegisterServer`. Lost, the server
-  registers again with a new token from Add server.
+  calls to Selan, and selan-keys' X25519 key pair, which existing keys are sealed to when Selan hands them over.
+  They are made on first start; only their public halves are sent, in `RegisterServer`. Lost, the server
+  registers again with a new token from Add server;
+- `selan_gateway-db`, the gateway's Postgres, whose password is `GATEWAY_DB_PASSWORD` in `.env`.
 
 Watch from your own monitoring: the proxy, the gateway and selan-keys answer `/healthz`, `/readyz` and `/metrics`
 (through Caddy, from your VPN), and compose restarts what exits.
@@ -224,8 +233,9 @@ own Vault and DNS-01) and the `Caddyfile` in every TLS mode and with every DNS p
 image is pinned to a digest that exists. Then it runs each case below on its own fresh host with its own
 Docker daemon (`ci/dind-test.sh <case>`): a privileged container with git alone, this commit cloned to
 `/opt/selan`, where `install.sh` installs Docker itself and gets every answer from the environment, as
-selan-proxy-e2e installs it. The proxy, the gateway and selan-keys are stand-ins until their images are
-pinned, and control is a fake (`ci/fake_control.py`).
+selan-proxy-e2e installs it. The proxy, the gateway and selan-keys are the released images `compose.yaml`
+pins, signatures checked; control (and selan-auth, for the gateway's boot) is a fake, `ci/fake_control.py`, served
+over TLS from `ci/tls/` (a CA for CI alone, whose key was thrown away), which the three are given to trust.
 
 Coverage is counted by paths, not lines: `install.sh` runs traced, and `ci/paths.py` fails the build unless
 every command line ran in some case and every `fail` ran as a refusal. Run the cases locally with
@@ -233,8 +243,8 @@ every command line ran in some case and every `fail` ran as a refusal. Run the c
 
 | Case | Host | What it proves |
 |---|---|---|
-| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: OpenBao's cosign signature checked, three registrations with Ed25519 and X25519 public keys, files root 0600, only selan-keys reaches the vault, the vault and Caddy have no way out; a re-run changes nothing; a **sealed vault** after a restart is unsealed by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data and one without a root token are refused |
-| `own-vault` | Ubuntu 24.04 | **your own Vault** (an OpenBao dev server standing in): no OpenBao runs, the Vault's policies, auth methods and AppRole are unchanged, selan-keys reads and writes through it; a missing or malformed address, role id or secret id is refused; a re-run changes nothing |
+| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: every image's cosign signature checked, three registrations with their public keys (selan-keys' sealing key too) and signed polls, keys 0600 in each volume, files root 0600, selan-keys reads a key with its AppRole for the proxy's token and refuses the gateway's and a stranger's, only selan-keys reaches the vault, only the gateway its Postgres, the vault and Caddy have no way out; a re-run changes nothing; a **sealed vault** after a restart is unsealed by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data and one without a root token are refused |
+| `own-vault` | Ubuntu 24.04 | **your own Vault** (an OpenBao dev server standing in): no OpenBao runs, the Vault's policies, auth methods and AppRole are unchanged, selan-keys reads a key through it; a missing or malformed address, role id or secret id is refused; a re-run changes nothing |
 | `dns` | Ubuntu 24.04 | **DNS-01**: an unknown provider and a missing or malformed token are refused; with Caddy built from `caddy/`, Caddy gets a way out and asks the provider's API for the challenge record (CI's token is refused there, so no certificate); the token stays out of output, Caddy's log and its saved config; `install.sh` fails plainly when `/readyz` does not come |
 | `own-ca` | Ubuntu 24.04 | **your own CA**: missing paths, missing files and files that are not PEM are refused; every name answers with that CA's certificate, checked against it alone; re-runs change nothing |
 | `tokens` | Ubuntu 24.04 | a first run with a registration **token missing** or malformed is refused before anything is written; with both **present** it registers and the tokens leave `.env`; caller tokens are kept on a re-run; a broken one in `.env` is refused |

@@ -1,18 +1,23 @@
-"""Stands in for Selan's control in CI: OwnServersService/RegisterServer as Connect JSON, as selan-proto has it.
+"""Stands in for Selan's control in CI: OwnServersService over Connect, binary protobuf, as selan-proto has it.
 
-Accepts each component's expected one-time token once, with an Ed25519 public_key and an X25519
-sealing_public_key of 32 bytes each and an https address; refuses anything else, as control does.
-selan-keys has a token of its own; OWN_SERVERS_COMPONENT_KEYS is not in selan-proto's enum yet and
-stands for the value control will add.
+RegisterServer accepts each component's expected one-time token once, with a 32-byte Ed25519 public_key and an
+https address, and for selan-keys a 32-byte X25519 sealing_public_key that is not the signing key; it refuses
+anything else, as control does. Poll answers every component with control's clock and no work. It serves TLS
+with ci/tls/, as control does: selan-keys takes Selan's address over https alone.
+
+It also stands in for selan-auth's SessionService, which the gateway asks at boot with its own server's token:
+each lookup answers no session, as selan-auth must once it takes those tokens (README, "Known gaps").
 """
 import base64
-import binascii
-import json
 import os
+import ssl
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PATH = "/control.v1.OwnServersService/RegisterServer"
+SERVICE = "/control.v1.OwnServersService/"
+AUTH_LOOKUPS = ("/auth.v1.SessionService/ResolveResourceToken", "/auth.v1.SessionService/ResolveSession")
+COMPONENTS = {1: "OWN_SERVERS_COMPONENT_PROXY", 2: "OWN_SERVERS_COMPONENT_GATEWAY", 3: "OWN_SERVERS_COMPONENT_KEYS"}
 TOKENS = {
     "OWN_SERVERS_COMPONENT_PROXY": os.environ["EXPECTED_TOKEN"],
     "OWN_SERVERS_COMPONENT_GATEWAY": os.environ["EXPECTED_TOKEN"],
@@ -21,55 +26,129 @@ TOKENS = {
 registered = set()
 
 
-def raw_key(body, field):
-    try:
-        key = base64.b64decode(body.get(field) or "", validate=True)
-    except binascii.Error:
-        return None
-    return key if len(key) == 32 else None
+def varint(data, at):
+    value = shift = 0
+    while True:
+        byte = data[at]
+        at += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, at
 
 
-def refusal(body):
-    if body.get("component") not in TOKENS:
-        return "invalid_argument", "component"
-    if body.get("registrationToken") != TOKENS[body["component"]]:
-        return "permission_denied", "unknown registration token"
-    if body["component"] in registered:
-        return "permission_denied", "token already used for this component"
-    if not str(body.get("address", "")).startswith("https://"):
-        return "invalid_argument", "address is not https"
-    signing, sealing = raw_key(body, "publicKey"), raw_key(body, "sealingPublicKey")
-    if signing is None or sealing is None:
-        return "invalid_argument", "public_key and sealing_public_key must be 32 raw bytes each"
-    if signing == sealing:
-        return "invalid_argument", "the sealing key is the signing key"
-    return None
+def fields(data):
+    """Each top-level field of a protobuf message as number -> value: an int, or bytes for a length-delimited one."""
+    out, at = {}, 0
+    while at < len(data):
+        key, at = varint(data, at)
+        number, wire = key >> 3, key & 7
+        if wire == 0:
+            out[number], at = varint(data, at)
+        elif wire == 2:
+            size, at = varint(data, at)
+            out[number], at = data[at:at + size], at + size
+        elif wire == 1:
+            out[number], at = data[at:at + 8], at + 8
+        elif wire == 5:
+            out[number], at = data[at:at + 4], at + 4
+        else:
+            raise ValueError(f"wire type {wire}")
+    return out
+
+
+def encode_varint(value):
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        out.append(byte | (0x80 if value else 0))
+        if not value:
+            return bytes(out)
+
+
+def message(*parts):
+    """parts are (number, value): an int is a varint, bytes or str a length-delimited field."""
+    out = bytearray()
+    for number, value in parts:
+        if isinstance(value, int):
+            out += encode_varint(number << 3) + encode_varint(value)
+        else:
+            raw = value.encode() if isinstance(value, str) else value
+            out += encode_varint(number << 3 | 2) + encode_varint(len(raw)) + raw
+    return bytes(out)
+
+
+def register(body):
+    """RegisterServerRequest: 1 token, 2 component, 3 address, 4 public_key, 6 sealing_public_key."""
+    component = COMPONENTS.get(body.get(2, 0))
+    if component is None:
+        return ("invalid_argument", "component"), None
+    if body.get(1, b"").decode() != TOKENS[component]:
+        return ("permission_denied", "unknown registration token"), component
+    if component in registered:
+        return ("permission_denied", "token already used for this component"), component
+    if not body.get(3, b"").decode().startswith("https://"):
+        return ("invalid_argument", "address is not https"), component
+    signing, sealing = body.get(4, b""), body.get(6, b"")
+    if len(signing) != 32:
+        return ("invalid_argument", "public_key must be 32 raw bytes"), component
+    if component == "OWN_SERVERS_COMPONENT_KEYS" and (len(sealing) != 32 or sealing == signing):
+        return ("invalid_argument", "selan-keys' sealing_public_key must be 32 raw bytes, not the signing key"), component
+    return None, component
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
-        refused = ("unimplemented", self.path) if self.path != PATH else refusal(body)
-        if refused:
-            code, message = refused
-            print(f"RegisterServer from {body.get('component')}: refused, {message}", flush=True)
-            self.answer(403 if code == "permission_denied" else 400, {"code": code, "message": message})
-            return
-        registered.add(body["component"])
-        print(f"RegisterServer from {body['component']} at {body['address']}: accepted, "
-              f"signing {body['publicKey']} sealing {body['sealingPublicKey']}", flush=True)
-        self.answer(200, {"companyId": "company-ci", "serverId": str(uuid.uuid4()), "controlPublicKeys": []})
+    protocol_version = "HTTP/1.1"
 
-    def answer(self, status, body):
-        raw = json.dumps(body).encode()
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        method = self.path[len(SERVICE):] if self.path.startswith(SERVICE) else ""
+        signed = self.headers.get("Authorization", "").startswith("Bearer ")
+        if method == "RegisterServer":
+            self.register(fields(raw))
+        elif method == "Poll":
+            component = COMPONENTS.get(fields(raw).get(1, 0), "an unnamed component")
+            print(f"Poll from {component}, {'signed' if signed else 'UNSIGNED'}", flush=True)
+            now = time.time()
+            self.answer(200, message((3, message((1, int(now)), (2, int(now % 1 * 1e9))))))
+        elif self.path in AUTH_LOOKUPS:
+            print(f"{self.path[len('/auth.v1.SessionService/'):]}, {'signed' if signed else 'UNSIGNED'}: no session",
+                  flush=True)
+            self.answer(200, b"")
+        else:
+            print(f"unimplemented: {self.path}", flush=True)
+            self.refuse(404, "unimplemented", self.path)
+
+    def register(self, body):
+        refused, component = register(body)
+        if refused:
+            code, words = refused
+            print(f"RegisterServer from {component}: refused, {words}", flush=True)
+            self.refuse(403 if code == "permission_denied" else 400, code, words)
+            return
+        registered.add(component)
+        sealing = f" sealing {base64.b64encode(body[6]).decode()}" if 6 in body else ""
+        print(f"RegisterServer from {component} at {body[3].decode()}: accepted, "
+              f"signing {base64.b64encode(body[4]).decode()}{sealing}", flush=True)
+        self.answer(200, message((1, "company-ci"), (2, str(uuid.uuid4()))))
+
+    def answer(self, status, raw, kind="application/proto"):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    def refuse(self, status, code, words):
+        self.answer(status, ('{"code":"%s","message":"%s"}' % (code, words)).encode(), "application/json")
 
     def log_message(self, *_):
         pass
 
 
-ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+server = ThreadingHTTPServer(("0.0.0.0", 8443), Handler)
+tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+tls.load_cert_chain("/ci/tls/fake-control.pem", "/ci/tls/fake-control.key")
+server.socket = tls.wrap_socket(server.socket, server_side=True)
+server.serve_forever()

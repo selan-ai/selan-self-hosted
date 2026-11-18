@@ -22,8 +22,11 @@ case "${1:-}" in
       sleep 2
     done
     compose exec -T openbao bao status >/dev/null 2>&1 || fail "OpenBao is sealed after the reboot: $(journalctl -u selan-unseal --no-pager | tail -n 5)"
-    for _ in $(seq 30); do ready gw -k && break; sleep 2; done
-    for name in gw mcp keys; do ready "$name" -k || fail "$name is not ready after the reboot"; done
+    # Docker starts the proxy beside a sealed selan-keys, and the proxy asks again only every five minutes.
+    for name in keys mcp gw; do
+      for _ in $(seq 80); do ready "$name" -k && break; sleep 5; done
+      ready "$name" -k || fail "$name is not ready after the reboot"
+    done
     pass "after a reboot selan-unseal.service unsealed OpenBao and every name is ready, with nobody's hands"
     ;;
   *) fail "usage: systemd.sh install|boot" ;;

@@ -185,8 +185,10 @@ read_settings() {
 
   read_tls
   ALLOWED=$(setting ALLOWED_CIDRS)
-  ALLOWED=${ALLOWED:-private_ranges}
-  [[ "$ALLOWED" =~ ^(private_ranges|[0-9a-f.:/\ ]+)$ ]] || fail "ALLOWED_CIDRS is private_ranges or a space-separated list of CIDRs"
+  # Caddy's private_ranges leaves out 100.64.0.0/10, where Tailscale's addresses are.
+  ALLOWED=${ALLOWED:-private_ranges 100.64.0.0/10}
+  local cidr='(private_ranges|[0-9a-f.:/]+)'
+  [[ "$ALLOWED" =~ ^$cidr( $cidr)*$ ]] || fail "ALLOWED_CIDRS is private_ranges or CIDRs, separated by spaces"
 
   CONTROL=$(setting CONTROL_BASE_URL)
   AUTH=$(setting AUTH_BASE_URL)
@@ -199,6 +201,7 @@ read_settings() {
   KEYS_TOKEN=$(registration_token SELAN_KEYS_REGISTRATION_TOKEN)
   PROXY_KEYS_TOKEN=$(caller_token PROXY_KEYS_TOKEN)
   GATEWAY_KEYS_TOKEN=$(caller_token GATEWAY_KEYS_TOKEN)
+  GATEWAY_DB_PASSWORD=$(caller_token GATEWAY_DB_PASSWORD)
 
   read_vault
 
@@ -332,10 +335,11 @@ write_env() {
     put ALLOWED_CIDRS "$ALLOWED"
     [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
     [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
-    put SELAN_REGISTRATION_TOKEN "$TOKEN"
-    put SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
+    one_time SELAN_REGISTRATION_TOKEN "$TOKEN"
+    one_time SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
     put PROXY_KEYS_TOKEN "$PROXY_KEYS_TOKEN"
     put GATEWAY_KEYS_TOKEN "$GATEWAY_KEYS_TOKEN"
+    put GATEWAY_DB_PASSWORD "$GATEWAY_DB_PASSWORD"
     put SELAN_VAULT "$VAULT"
     if [ -n "$OWN_VAULT" ]; then
       put COMPOSE_PROFILES ""
@@ -354,6 +358,12 @@ write_env() {
 put() {
   printf "%s='%s'\n" "$1" "$2"
   export "$1=$2"
+}
+
+# A registration token is written while it is still to be used, and once used is neither in .env nor set:
+# the proxy refuses a blank one, so compose passes it only when it is there.
+one_time() {
+  if [ -n "$2" ]; then put "$1" "$2"; else unset "$1"; fi
 }
 
 # ---------------------------------------------------------------- the vault
@@ -455,6 +465,10 @@ start() {
   compose config --quiet
   verify_images
   compose pull --quiet --policy missing
+  # The proxy asks selan-keys whether it is ready as it starts, then every five minutes: selan-keys goes first.
+  compose up -d --remove-orphans keys caddy
+  step "Waiting for your server to register with Selan and answer /readyz"
+  answers "$KEYS_HOST"
   compose up -d --remove-orphans
 }
 
@@ -478,6 +492,10 @@ verify_images() {
     [[ "${name##*/}" != *:* ]] || repo=${name%:*}
     read -r identity issuer < <(awk -v r="$repo" '$1 == r { print $2, $3 }' "$DIR/signers.txt") ||
       fail "signers.txt names nobody who signs $repo"
+    if [ "$identity" = unsigned ]; then
+      say "pinned:  $image (its publisher signs none; the digest is the check)"
+      continue
+    fi
     if ! docker run --rm "$COSIGN_IMAGE" verify --certificate-identity-regexp "$identity" \
       --certificate-oidc-issuer "$issuer" "$image" >/dev/null 2>"$log"; then
       tail -n 3 "$log" >&2
@@ -489,21 +507,24 @@ verify_images() {
   rm -f "$log"
 }
 
-wait_ready() {
-  local host tries
+# answers <host>: https://<host>/readyz answers 200 through Caddy, within SELAN_READY_TIMEOUT.
+answers() {
+  local tries i
   tries=$((${SELAN_READY_TIMEOUT:-300} / 5))
-  step "Waiting for your server to register with Selan and answer /readyz"
-  for host in "$PROXY_HOST" "$GATEWAY_HOST" "$KEYS_HOST"; do
-    for i in $(seq "$tries"); do
-      curl -fsSk --max-time 5 -o /dev/null --resolve "$host:443:$BIND_ADDR" "https://$host/readyz" 2>/dev/null && break
-      [ "$i" = "$tries" ] && {
-        compose logs --tail 30 proxy gateway keys caddy >&2 || true
-        fail "https://$host/readyz did not answer within $((tries * 5)) seconds"
-      }
-      sleep 5
-    done
-    say "https://$host/readyz answers on $BIND_ADDR."
+  for i in $(seq "$tries"); do
+    curl -fsSk --max-time 5 -o /dev/null --resolve "$1:443:$BIND_ADDR" "https://$1/readyz" 2>/dev/null && break
+    [ "$i" = "$tries" ] && {
+      compose logs --tail 30 proxy gateway keys caddy >&2 || true
+      fail "https://$1/readyz did not answer within $((tries * 5)) seconds"
+    }
+    sleep 5
   done
+  say "https://$1/readyz answers on $BIND_ADDR."
+}
+
+wait_ready() {
+  answers "$PROXY_HOST"
+  answers "$GATEWAY_HOST"
   # Registered: the one-time tokens have done their work, so they leave .env.
   TOKEN="" KEYS_TOKEN=""
   write_env

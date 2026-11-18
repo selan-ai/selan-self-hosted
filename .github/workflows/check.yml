@@ -31,16 +31,8 @@ jobs:
           docker run --rm -v "$PWD:/repo" -w /repo \
             rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
 
-      - name: the stand-ins' key derivation matches RFC 8032 and RFC 7748
-        run: python3 -I ci/keys.py
-
   compose:
     runs-on: ubuntu-latest
-    env:
-      # compose.yaml refuses to start without a pinned proxy, gateway and selan-keys; these only satisfy `config`.
-      SELAN_PROXY_IMAGE: example.invalid/selan-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      SELAN_GATEWAY_IMAGE: example.invalid/selan-mcp-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      SELAN_KEYS_IMAGE: example.invalid/selan-keys@sha256:0000000000000000000000000000000000000000000000000000000000000000
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +47,7 @@ jobs:
         run: |
           docker compose --env-file .env.example config --quiet
           docker compose --env-file .env.example --profile openbao config --quiet
-          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway keys openbao proxy '
+          docker compose --env-file .env.example --profile openbao config --services | sort | tr '\n' ' ' | grep -qx 'caddy gateway keys openbao postgres proxy '
           export SELAN_TLS=dns SELAN_DNS_PROVIDER=hetzner SELAN_DNS_TOKEN=ci-not-a-token
           dns=(docker compose --env-file .env.example -f compose.yaml -f compose.dns.yaml)
           "${dns[@]}" config --quiet
@@ -65,7 +57,9 @@ jobs:
           base=$(docker compose --env-file .env.example --profile openbao config --format json)
           jq -e '[.services[] | select(.networks | has("vault"))] | length == 2' <<<"$base" >/dev/null
           jq -e '.services.keys.networks | has("vault")' <<<"$base" >/dev/null
-          jq -e '[.services.proxy, .services.gateway, .services.caddy | .environment | keys[] | select(startswith("VAULT_"))] | length == 0' <<<"$base" >/dev/null
+          jq -e '[.services.proxy, .services.gateway, .services.caddy, .services.postgres | .environment | keys[] | select(startswith("VAULT_"))] | length == 0' <<<"$base" >/dev/null
+          # Only the gateway shares a network with its database.
+          jq -e '[.services[] | select(.networks | has("gateway-db"))] | length == 2' <<<"$base" >/dev/null
 
       - name: Caddyfile, every TLS mode and every DNS provider install.sh offers
         run: |
@@ -115,8 +109,7 @@ jobs:
         if: failure()
         run: |
           docker exec "selan-ci-${{ matrix.case }}" bash -c 'tail -n 40 /var/log/docker.log 2>/dev/null; cd /opt/selan &&
-            export SELAN_PROXY_IMAGE=unused SELAN_GATEWAY_IMAGE=unused SELAN_KEYS_IMAGE=unused SELAN_CADDY_IMAGE=unused &&
-            export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml" &&
+            export PROXY_KEYS_TOKEN=unused GATEWAY_KEYS_TOKEN=unused GATEWAY_DB_PASSWORD=unused COMPOSE_FILE="$PWD/compose.yaml:$PWD/ci/compose.ci.yaml" &&
             docker compose --project-directory "$PWD" --profile openbao logs --tail 80' || true
 
   # Every path of install.sh taken by some case: every command line ran, and every `fail` ran as one.
