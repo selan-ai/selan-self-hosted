@@ -47,7 +47,7 @@ jobs:
       - name: the Caddy build
         run: |
           image=$(ci/caddy-image.sh)
-          [ -n "$image" ] || image=$(sed -n 's/^ *image: *\(ghcr.io\/selan-ai\/selan-self-hosted\/caddy@.*\)$/\1/p' compose.yaml)
+          [ -n "$image" ] || image=$(sed -n 's/^ *image: *\(europe-docker.pkg.dev\/selan-prod\/selan-public\/caddy@.*\)$/\1/p' compose.yaml)
           echo "CADDY=$image" >>"$GITHUB_ENV"
           echo "SELAN_CADDY_IMAGE=$image" >>"$GITHUB_ENV"
 

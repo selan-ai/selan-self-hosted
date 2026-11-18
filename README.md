@@ -156,7 +156,7 @@ Each image is pinned in `compose.yaml` by digest, by a pull request here, so Sel
 your server runs without a new tag. Before running a digest, `install.sh` checks its cosign signature
 against the signer [`signers.txt`](signers.txt) names: selan-proxy, selan-mcp-gateway and selan-keys are
 `europe-docker.pkg.dev/selan-prod/selan-public/<image>`, signed keylessly by their own GitLab CI at a
-release tag; Caddy is `ghcr.io/selan-ai/selan-self-hosted/caddy`, built from [`caddy/Dockerfile`](caddy/Dockerfile)
+release tag; Caddy is `europe-docker.pkg.dev/selan-prod/selan-public/caddy` too, built from [`caddy/Dockerfile`](caddy/Dockerfile)
 and signed by this repository's `caddy-image` workflow on `main`; OpenBao is signed by OpenBao's
 release workflow. To check one yourself:
 

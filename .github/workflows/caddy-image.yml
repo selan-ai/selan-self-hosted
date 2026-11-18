@@ -1,6 +1,6 @@
-# Builds caddy/Dockerfile for amd64 and arm64 on main, pushes it to ghcr.io/selan-ai/selan-self-hosted/caddy
-# and signs the digest keylessly with cosign: the certificate names this file at refs/heads/main, which
-# is what signers.txt has install.sh check. A pull request then pins the digest in compose.yaml.
+# Builds caddy/Dockerfile for amd64 and arm64 on main, pushes it to Selan's public Artifact Registry, where
+# installs pull it anonymously, and signs the digest keylessly with cosign: the certificate names this file
+# at refs/heads/main, which is what signers.txt has install.sh check. A pull request then pins the digest.
 name: caddy-image
 
 on:
@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  # One OIDC token for Google's Workload Identity Federation (the push), one for Fulcio (the signature).
   id-token: write
 
 jobs:
@@ -19,11 +19,19 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
-      IMAGE: ghcr.io/selan-ai/selan-self-hosted/caddy
+      IMAGE: europe-docker.pkg.dev/selan-prod/selan-public/caddy
       COSIGN_VERSION: v3.1.4
       COSIGN_SHA256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
     steps:
       - uses: actions/checkout@v4
+
+      # github-pool trusts attribute.repository/selan-ai/selan-self-hosted for github-deployer.
+      - id: gcp
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: projects/1089181748711/locations/global/workloadIdentityPools/github-pool/providers/github
+          service_account: github-deployer@selan-prod.iam.gserviceaccount.com
+          token_format: access_token
 
       - name: cosign, checked against its release checksum
         run: |
@@ -33,9 +41,9 @@ jobs:
 
       - name: build, push and sign
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
         run: |
-          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | docker login europe-docker.pkg.dev -u oauth2accesstoken --password-stdin
           docker buildx create --use --name release >/dev/null
           version=$(sed -n 's/.*xcaddy build \(v[0-9.]*\).*/\1/p' caddy/Dockerfile)
           docker buildx build --platform linux/amd64,linux/arm64 --metadata-file /tmp/build.json \
