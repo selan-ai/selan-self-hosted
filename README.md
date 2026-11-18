@@ -169,10 +169,6 @@ cosign verify --certificate-identity-regexp '<identity from signers.txt>' \
 
 ## Known gaps
 
-- **The gateway does not start against Selan yet.** selan-mcp-gateway 0.1.0 asks selan-auth at boot, with
-  its own server's signed token, and selan-auth takes no server's token yet, so the gateway exits and
-  `install.sh` stops at `mcp.<your domain>/readyz`. The proxy and selan-keys are unaffected. CI's fake control
-  answers that lookup as selan-auth will.
 - **GitLab, GitHub and Slack sign-ins** through your gateway need OAuth apps of your own, which this release
   does not configure; `compose.yaml` gives the gateway stand-ins for them.
 
