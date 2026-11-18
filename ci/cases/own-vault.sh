@@ -32,7 +32,8 @@ refused 1 'KEYS_VAULT_SECRET_ID is not set' "${own[@]}" VAULT_ADDR="$address" KE
 refused 1 'an AppRole id has characters' "${own[@]}" VAULT_ADDR="$address" KEYS_VAULT_ROLE_ID="$role" KEYS_VAULT_SECRET_ID='not one'
 pass "SELAN_VAULT=own refuses a missing or malformed address, role id and secret id"
 
-install -u SELAN_VAULT VAULT_ADDR="$address" KEYS_VAULT_ROLE_ID="$role" KEYS_VAULT_SECRET_ID="$secret" | tee /tmp/install.log
+install -u SELAN_VAULT VAULT_ADDR="$address" KEYS_VAULT_ROLE_ID="$role" KEYS_VAULT_SECRET_ID="$secret" \
+  SELAN_KEYS_REGISTRATION_TOKEN=selanreg_ci-keys-stack-test | tee /tmp/install.log
 grep -q "Using your Vault at $address; nothing in it is changed." /tmp/install.log || fail "install.sh did not say it uses the own Vault"
 grep -qx "SELAN_VAULT='own'" .env || fail ".env does not record SELAN_VAULT=own"
 grep -qx "COMPOSE_PROFILES=''" .env || fail ".env still starts OpenBao"

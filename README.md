@@ -1,7 +1,7 @@
 # selan-self-hosted
 
 [Selan](https://selan.ai)'s proxy, MCP gateway and selan-keys on your own server, inside your VPN,
-with every provider key in your own vault. This is what **Settings › Own servers** in Selan installs.
+with every provider key in your own vault. This is what **Settings › General › Own proxy** in Selan installs.
 
 **Installing, and every upgrade, runs code Selan wrote, as root on your server**: `install.sh` and the
 images it starts. What protects you is not trust in Selan at that moment but this: the code comes from a
@@ -15,7 +15,7 @@ against its cosign signature first, so the tag decides exactly what your server 
 gateway and one for selan-keys:
 
 ```sh
-export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN /opt/selan/install.sh
+export SELAN_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 ```
 
 Each token is shown once and works once. It travels in the environment, never on a command line. To read
@@ -81,7 +81,7 @@ it without systemd. Pass the ones you set through sudo:
 
 | Variable | |
 |---|---|
-| `SELAN_REGISTRATION_TOKEN`, `SELAN_KEYS_REGISTRATION_TOKEN` | from Add server, the proxy's and gateway's and selan-keys' own; needed on the first run only, and removed from `.env` once the server has registered |
+| `SELAN_REGISTRATION_TOKEN` | from Add server: within its hour it registers the proxy, the gateway and selan-keys; needed on the first run only, and removed from `.env` once the server has registered. `SELAN_KEYS_REGISTRATION_TOKEN`, a second token for selan-keys alone, is optional |
 | `SELAN_PROXY_HOST` | the proxy's name, as entered under Add server: `gw.example.com` |
 | `SELAN_GATEWAY_HOST` | the gateway's name; `mcp.` beside the proxy's by default |
 | `SELAN_KEYS_HOST` | selan-keys' name, where your admins add keys; `keys.` beside the proxy's by default |
@@ -150,7 +150,7 @@ sudo git -C /opt/selan diff HEAD <new tag>
 sudo git -C /opt/selan -c advice.detachedHead=false checkout <new tag> && sudo /opt/selan/install.sh
 ```
 
-The token is not needed again. To stay where you are, do nothing. Settings › Own servers says when your
+The token is not needed again. To stay where you are, do nothing. Settings › General › Own proxy says when your
 version is older than Selan supports.
 
 Each image is pinned in `compose.yaml` by digest, by a pull request here, so Selan cannot change what

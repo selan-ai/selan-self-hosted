@@ -23,7 +23,7 @@ and has the person run the one line. Claude never sees a registration token, `.e
    on macOS a folder under `/Users` that Docker Desktop shares), Docker volumes named `selan_*`, and
    nothing else. Wait for a yes.
 3. **The names and TLS.** On this machine the proxy listens on `127.0.0.1` unless the person gives a VPN
-   address. Its name is the address they entered under Settings › Own servers › Add server; for a
+   address. Its name is the address they entered under Settings › General › Own proxy › Add server; for a
    trial, `gw.<something>.localhost` resolves to `127.0.0.1` with no DNS change, and `SELAN_TLS=internal`
    (Caddy's own CA) is enough. For a name their people will use, ask which TLS: `dns` (Let's Encrypt over
    their DNS provider's API; `install.sh` asks for the token without showing it) or `files` (their own
@@ -40,7 +40,7 @@ and has the person run the one line. Claude never sees a registration token, `.e
 5. **Check it.** `sudo docker compose --project-directory /opt/selan ps` shows proxy, gateway, keys,
    openbao and caddy running, and
    `curl -sk --resolve gw.example.localhost:443:127.0.0.1 https://gw.example.localhost/readyz`
-   answers 200. The server appears under Settings › Own servers.
+   answers 200. The server appears under Settings › General › Own proxy.
 6. **One real request.** The person runs it, since it needs their token:
    ```sh
    read -rs T && printf 'Authorization: Bearer %s\n' "$T" | curl -sk https://gw.example.localhost/anthropic/v1/messages \
@@ -51,4 +51,4 @@ and has the person run the one line. Claude never sees a registration token, `.e
    provider); fix that part, never by reading the vault's files.
 7. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v`
    deletes the containers and the vault's data with every key in it; say so before running it, then
-   `sudo rm -rf /opt/selan`, and remove the server under Settings › Own servers.
+   `sudo rm -rf /opt/selan`, and remove the server under Settings › General › Own proxy.

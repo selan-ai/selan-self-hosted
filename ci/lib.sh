@@ -18,7 +18,8 @@ export curl_image=curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d19070
 # The fake control alone runs unsigned (python, CI's own): every image of the stack is checked.
 export SELAN_UNSIGNED_OK=$probe
 export COMPOSE_FILE="$root/compose.yaml:$root/ci/compose.ci.yaml"
-export SELAN_REGISTRATION_TOKEN=selanreg_ci-stack-test SELAN_KEYS_REGISTRATION_TOKEN=selanreg_ci-keys-stack-test
+# The one token Add server shows; own-vault's first install adds the optional second one for selan-keys.
+export SELAN_REGISTRATION_TOKEN=selanreg_ci-stack-test
 export SELAN_PROXY_HOST=gw.selan-ci.test SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_VAULT=openbao
 export CONTROL_BASE_URL=https://fake-control:8443 SELAN_OUTSIDE_CHECK=no SELAN_NONINTERACTIVE=1
 
