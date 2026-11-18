@@ -362,13 +362,13 @@ write_env() {
       printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
     fi
     put ALLOWED_CIDRS "$ALLOWED"
-    put LAUNCH_CONNECTORS "$LAUNCH_CONNECTORS"
-    put LAUNCH_MARKETPLACES "$LAUNCH_MARKETPLACES"
-    put LAUNCH_SETTINGS_DEFAULTS "$LAUNCH_SETTINGS_DEFAULTS"
+    put_set LAUNCH_CONNECTORS "$LAUNCH_CONNECTORS"
+    put_set LAUNCH_MARKETPLACES "$LAUNCH_MARKETPLACES"
+    put_set LAUNCH_SETTINGS_DEFAULTS "$LAUNCH_SETTINGS_DEFAULTS"
     [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
     [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
-    one_time SELAN_REGISTRATION_TOKEN "$TOKEN"
-    one_time SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
+    put_set SELAN_REGISTRATION_TOKEN "$TOKEN"
+    put_set SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
     put PROXY_KEYS_TOKEN "$PROXY_KEYS_TOKEN"
     put GATEWAY_KEYS_TOKEN "$GATEWAY_KEYS_TOKEN"
     put GATEWAY_DB_PASSWORD "$GATEWAY_DB_PASSWORD"
@@ -392,9 +392,9 @@ put() {
   export "$1=$2"
 }
 
-# A registration token is written while it is still to be used, and once used is neither in .env nor set:
-# the proxy refuses a blank one, so compose passes it only when it is there.
-one_time() {
+# Written only when it has a value, and otherwise neither in .env nor set: the proxy refuses a blank one, so
+# compose passes it only when it is there (a used registration token, an empty launch allowlist).
+put_set() {
   if [ -n "$2" ]; then put "$1" "$2"; else unset "$1"; fi
 }
 
