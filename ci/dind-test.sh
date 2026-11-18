@@ -34,7 +34,7 @@ case "$case" in
       docker build -q -t selan-ci-systemd - >/dev/null
     "${run[@]}" --cgroupns=private selan-ci-systemd >/dev/null
     for _ in $(seq 30); do
-      docker exec "$box" systemctl is-system-running 2>/dev/null | grep -Eq 'running|degraded' && break
+      [[ "$(docker exec "$box" systemctl is-system-running 2>/dev/null)" =~ running|degraded ]] && break
       sleep 1
     done
     ;;

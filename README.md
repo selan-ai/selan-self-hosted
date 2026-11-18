@@ -236,9 +236,9 @@ proxy.
 
 ## Tests
 
-`.github/workflows/check.yml` runs shellcheck and actionlint, validates `compose.yaml` (with OpenBao, your
-own Vault and DNS-01) and the `Caddyfile` in every TLS mode and with every DNS provider, and checks every
-image is pinned to a digest that exists. Then it runs each case below on its own fresh host with its own
+`.github/workflows/check.yml` runs shellcheck and actionlint, refuses a pipe into `grep -q` or `head` in a
+script, validates `compose.yaml` (with OpenBao, your own Vault and DNS-01) and the `Caddyfile` in every TLS
+mode and with every DNS provider, and checks every image is pinned to a digest that exists. Then it runs each case below on its own fresh host with its own
 Docker daemon (`ci/dind-test.sh <case>`): a privileged container with git alone, this commit cloned to
 `/opt/selan`, where `install.sh` installs Docker itself and gets every answer from the environment, as
 selan-proxy-e2e installs it. The proxy, the gateway and selan-keys are the released images `compose.yaml`
@@ -260,4 +260,4 @@ every command line ran in some case and every `fail` ran as a refusal. Run the c
 | `refusals` | Ubuntu 24.04 | every malformed or missing setting is refused, naming its variable; on a terminal every question is asked and kept, secrets unseen; a release without a codename; a VPN address found on `wg0`; non-root, a copy outside a checkout, a checkout elsewhere; unpinned and unknown images; an OpenBao and a Docker that will not start |
 | `systemd` | Ubuntu 24.04 booted by systemd | a stopped Docker started with systemctl; the boot unit of 0.2.2 and earlier retired; after a **reboot** the stack is back and the unseal service unseals OpenBao with nobody's hands |
 | `no-debian` | Alpine | outside Debian and Ubuntu `install.sh` installs nothing and says to install curl, then Docker with the compose plugin |
-| `upgrade` | Ubuntu 24.04 | an **upgrade** as README's "Upgrade" does it: a server installed from v0.2.4, with a key in its vault, checks out this commit and runs `install.sh` again with the same settings; it exits 0, every service runs on the image this commit pins, the key is still read through selan-keys, and `selan-keys` is installed |
+| `upgrade` | Ubuntu 24.04 | an **upgrade** as README's "Upgrade" does it: a server installed from v0.2.4, with a key in its vault, checks out this commit and runs `install.sh` again with the same settings, twice; it exits 0, every service runs on the image this commit pins, the key is still read through selan-keys, `selan-keys` is installed, and the second run changes nothing |

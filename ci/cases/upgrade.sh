@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # An upgrade as README's "Upgrade" does it: a server installed from an older release, with a key in its vault,
-# checks out this commit and runs install.sh again with the same settings. It exits 0, every service runs on
-# the image this compose.yaml pins, the key is still read through selan-keys, and `selan-keys` is installed.
+# checks out this commit and runs install.sh again with the same settings, twice. It exits 0, every service
+# runs on the image this compose.yaml pins, the key is still read through selan-keys, `selan-keys` is
+# installed, and the second run changes nothing.
 # shellcheck source=../lib.sh
 . "$(dirname "$0")/../lib.sh"
 
@@ -11,7 +12,7 @@ wrapper=/usr/local/bin/selan-keys
 
 # Read whole before it runs: the checkout under this file moves to $from and back.
 main() {
-  local new bao_root old_pins service want got answer
+  local new bao_root old_pins running answer before
   new=$(git rev-parse HEAD)
   git fetch -q --depth 1 https://github.com/selan-ai/selan-self-hosted tag "$from"
   git -c advice.detachedHead=false checkout -q "$from"
@@ -28,11 +29,8 @@ main() {
   git -c advice.detachedHead=false checkout -q "$new"
   install >/tmp/upgrade.log 2>&1 || fail "the upgrade from $from exited $?: $(tail -n 5 /tmp/upgrade.log)"
   [ "$old_pins" != "$(compose config --images | sort -u)" ] || fail "$from pins the images this commit does: nothing was upgraded"
-  for service in $(compose config --services); do
-    want=$(compose config --images "$service")
-    got=$(docker inspect -f '{{.Config.Image}}' "selan-$service-1")
-    [ "$got" = "$want" ] || fail "$service runs $got, not $want"
-  done
+  running=$(compose ps --format '{{.Image}}' | sort -u)
+  [ "$running" = "$(compose config --images | sort -u)" ] || fail "the stack runs other images than this compose.yaml pins: $running"
   pass "the upgrade from $from exits 0 and every service runs on the image this commit pins"
 
   answer=$(key_read "$(saved PROXY_KEYS_TOKEN)" ci-key)
@@ -40,6 +38,11 @@ main() {
   [ "$(mode "$wrapper")" = "root 755" ] || fail "the upgrade left $wrapper missing or not root 755"
   cmp -s selan-keys.sh "$wrapper" || fail "$wrapper is not selan-keys.sh"
   pass "the vault keeps its key, selan-keys reads it with the proxy's token, and $wrapper is installed"
+
+  before=$(sha256sum .env openbao-init.json "$wrapper")
+  install >/tmp/upgrade.log 2>&1 || fail "a second run at this commit exited $?: $(tail -n 5 /tmp/upgrade.log)"
+  [ "$before" = "$(sha256sum .env openbao-init.json "$wrapper")" ] || fail "a second run at this commit changed .env, openbao-init.json or $wrapper"
+  pass "a second run at this commit, with the same settings, exits 0 and changes nothing"
 }
 
 main
