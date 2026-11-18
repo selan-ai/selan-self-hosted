@@ -21,6 +21,15 @@ jobs:
             bash -n "$script"
           done
 
+      # Under pipefail a reader that leaves early (grep -q, head) breaks its writer's pipe and fails the line:
+      # install.sh once read an existing kv/ mount as missing this way.
+      - name: no pipe into grep -q or head
+        run: |
+          if git grep -nE '\|[[:space:]]*(grep[[:space:]]+(-[A-Za-z]*[qm][A-Za-z]*|--quiet|--max-count)|head([[:space:]]|$))' -- '*.sh'; then
+            echo "read the whole output into a variable, then match it" >&2
+            exit 1
+          fi
+
       - name: shellcheck
         run: |
           git ls-files -z '*.sh' | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt \
@@ -91,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [openbao, own-vault, dns, own-ca, tokens, outside, refusals, systemd, no-debian]
+        case: [openbao, own-vault, dns, own-ca, tokens, outside, refusals, systemd, no-debian, upgrade]
     steps:
       - uses: actions/checkout@v4
 

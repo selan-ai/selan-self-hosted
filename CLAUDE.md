@@ -8,6 +8,8 @@ Public install for Selan's Own servers: a company's own proxy, MCP gateway, sela
 - Every script: `#!/usr/bin/env bash`, `set -euo pipefail`, shellcheck-clean, readable top to bottom.
   `install.sh` also runs under macOS's bash 3.2 (the local skill): no `mapfile`, no `"${empty[@]}"`.
 - `install.sh` is idempotent: a second run with nothing new changes no file. The cases check it.
+- No pipe into `grep -q` or `head`: it leaves at the match, and under `pipefail` its writer's broken pipe
+  fails the line. Read the output into a variable, then match it; `check` refuses one.
 - Every path of `install.sh` is taken by a case in `ci/cases/` (README, "Tests"): a new branch or `fail`
   gets its case in the same pull request, or `ci/paths.py` fails the build. Excuse a line in
   `ci/paths-allowed.txt` only when no CI host can reach it, and say why.

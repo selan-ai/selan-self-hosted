@@ -9,7 +9,7 @@ while :; do
   case $? in
     0) sleep 5 ;;
     2)
-      if bao write -field=sealed sys/unseal key=- <"$key" | grep -qx false; then
+      if [ "$(bao write -field=sealed sys/unseal key=- <"$key")" = false ]; then
         echo "OpenBao was sealed; unsealed it."
       else
         echo "OpenBao is sealed and the key in openbao-unseal.key did not unseal it." >&2

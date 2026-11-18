@@ -51,7 +51,7 @@ install_docker() {
   # shellcheck disable=SC1091
   . /etc/os-release
   local distro=$ID
-  [ "$distro" = ubuntu ] || [ "$distro" = debian ] || distro=$(printf '%s' "$ID_LIKE" | grep -Eo 'ubuntu|debian' | head -n 1)
+  [ "$distro" = ubuntu ] || [ "$distro" = debian ] || { [[ "$ID_LIKE" =~ (ubuntu|debian) ]] && distro=${BASH_REMATCH[1]}; }
   local codename=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}
   [ -n "$codename" ] || fail "cannot tell this release's codename from /etc/os-release"
   apt-get update -qq
@@ -156,7 +156,7 @@ private_ipv4() {
 vpn_address() {
   command -v ip >/dev/null || return 0
   ip -4 -o addr show 2>/dev/null |
-    awk '$2 ~ /^(tailscale|wg|tun|zt|nebula)/ { split($4, a, "/"); print a[1]; exit }'
+    awk '!found && $2 ~ /^(tailscale|wg|tun|zt|nebula)/ { split($4, a, "/"); print a[1]; found = 1 }'
 }
 
 read_settings() {
@@ -442,10 +442,14 @@ openbao() {
   [ -n "$BAO_TOKEN" ] || fail "no root token in $init"
   export BAO_TOKEN
 
-  local mount=${PREFIX%%/*} path=${PREFIX#*/}
+  local mount=${PREFIX%%/*} path=${PREFIX#*/} mounts methods
   path=${path%/}
-  bao secrets list -format=json | grep -q "\"$mount/\"" || bao secrets enable -path="$mount" kv-v2 >/dev/null
-  bao auth list -format=json | grep -q '"approle/"' || bao auth enable approle >/dev/null
+  # Read whole, then matched: grep -q on a pipe leaves at the match, and under pipefail the listing's broken
+  # pipe read as "not there", so 0.2.5's upgrade enabled kv/ again and stopped at "path is already in use".
+  mounts=$(bao secrets list -format=json)
+  [[ "$mounts" == *"\"$mount/\":"* ]] || bao secrets enable -path="$mount" kv-v2 >/dev/null
+  methods=$(bao auth list -format=json)
+  [[ "$methods" == *'"approle/":'* ]] || bao auth enable approle >/dev/null
   bao policy write selan - >/dev/null <<EOF
 # selan-keys reads and writes the company's keys under ${PREFIX}, and nothing else.
 path "$mount/data/$path/*" { capabilities = ["create", "read", "update", "delete"] }
