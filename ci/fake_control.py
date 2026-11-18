@@ -5,8 +5,9 @@ https address, and for selan-keys a 32-byte X25519 sealing_public_key that is no
 anything else, as control does. Poll answers every component with control's clock and no work. It serves TLS
 with ci/tls/, as control does: selan-keys takes Selan's address over https alone.
 
-It also stands in for selan-auth's SessionService, which the gateway asks at boot with its own server's token:
-each lookup answers no session, as selan-auth must once it takes those tokens (README, "Known gaps").
+ResolveSession, which the gateway asks at boot and for every session, answers a signed call with no session and
+refuses an unsigned one. AUTH_SERVER_URL points here too, and selan-auth's SessionService is refused as
+auth.selan.ai refuses a server's token: a gateway that asks it instead of control must fail its boot here as well.
 """
 import base64
 import os
@@ -16,7 +17,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVICE = "/control.v1.OwnServersService/"
-AUTH_LOOKUPS = ("/auth.v1.SessionService/ResolveResourceToken", "/auth.v1.SessionService/ResolveSession")
+SELAN_AUTH = "/auth.v1.SessionService/"
 COMPONENTS = {1: "OWN_SERVERS_COMPONENT_PROXY", 2: "OWN_SERVERS_COMPONENT_GATEWAY", 3: "OWN_SERVERS_COMPONENT_KEYS"}
 TOKENS = {
     "OWN_SERVERS_COMPONENT_PROXY": os.environ["EXPECTED_TOKEN"],
@@ -112,10 +113,15 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Poll from {component}, {'signed' if signed else 'UNSIGNED'}", flush=True)
             now = time.time()
             self.answer(200, message((3, message((1, int(now)), (2, int(now % 1 * 1e9))))))
-        elif self.path in AUTH_LOOKUPS:
-            print(f"{self.path[len('/auth.v1.SessionService/'):]}, {'signed' if signed else 'UNSIGNED'}: no session",
-                  flush=True)
-            self.answer(200, b"")
+        elif method == "ResolveSession":
+            print(f"ResolveSession, {'signed: no session' if signed else 'UNSIGNED: refused'}", flush=True)
+            if signed:
+                self.answer(200, b"")
+            else:
+                self.refuse(401, "unauthenticated", "not signed")
+        elif self.path.startswith(SELAN_AUTH):
+            print(f"selan-auth {self.path[len(SELAN_AUTH):]}: refused, selan-auth takes no server's token", flush=True)
+            self.refuse(401, "unauthenticated", "selan-auth takes no server's token")
         else:
             print(f"unimplemented: {self.path}", flush=True)
             self.refuse(404, "unimplemented", self.path)
