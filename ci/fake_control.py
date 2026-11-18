@@ -5,8 +5,9 @@ https address, and for selan-keys a 32-byte X25519 sealing_public_key that is no
 anything else, as control does. Poll answers every component with control's clock and no work. It serves TLS
 with ci/tls/, as control does: selan-keys takes Selan's address over https alone.
 
-It also stands in for selan-auth's SessionService, which the gateway asks at boot with its own server's token:
-each lookup answers no session, as selan-auth must once it takes those tokens (README, "Known gaps").
+ResolveSession, which a company's proxy and gateway ask instead of selan-auth (the gateway at boot, with a token
+nobody holds), answers no session, as control does for a token it does not know. selan-auth's SessionService
+answers the same, for an older image that still asks it.
 """
 import base64
 import os
@@ -112,6 +113,9 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Poll from {component}, {'signed' if signed else 'UNSIGNED'}", flush=True)
             now = time.time()
             self.answer(200, message((3, message((1, int(now)), (2, int(now % 1 * 1e9))))))
+        elif method == "ResolveSession":
+            print(f"ResolveSession, {'signed' if signed else 'UNSIGNED'}: no session", flush=True)
+            self.answer(200, b"")
         elif self.path in AUTH_LOOKUPS:
             print(f"{self.path[len('/auth.v1.SessionService/'):]}, {'signed' if signed else 'UNSIGNED'}: no session",
                   flush=True)
