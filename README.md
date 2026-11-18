@@ -91,6 +91,9 @@ it without systemd. Pass the ones you set through sudo:
 | `SELAN_DNS_PROVIDER`, `SELAN_DNS_TOKEN` | with `dns`: the provider, and an API token that may edit TXT records in your zone; kept in `.env` only |
 | `SELAN_TLS_CERT`, `SELAN_TLS_KEY` | with `files`: paths to your CA's certificate chain and its key, copied into `/opt/selan/certs/` |
 | `ALLOWED_CIDRS` | who Caddy lets in: `private_ranges` and CIDRs, separated by spaces; `private_ranges 100.64.0.0/10` by default, since Caddy's `private_ranges` leaves out Tailscale's 100.64.0.0/10 |
+| `LAUNCH_CONNECTORS` | your allowlist of connectors Selan's launch settings may hand your developers' apps, by exact URL, separated by commas; any other connector is dropped, so a compromised Selan cannot point an app elsewhere. By default the connectors your own gateway serves by itself: `https://<gateway>/<slug>/mcp` for `selan`, `slack-bot`, `gitlab`, `github`, `figma` and `postgresql`. Any other connector, Google's on your gateway included (some reach Selan's workspace service), is offered only once you add its URL |
+| `LAUNCH_MARKETPLACES` | the same for plugin marketplaces, by exact URL; none by default |
+| `LAUNCH_SETTINGS_DEFAULTS` | the Claude Code settings, by key, that Selan's defaults may set; none by default |
 | `SELAN_VAULT` | `openbao` (started on this server) or `own`; `own` when `VAULT_ADDR` is set, asked otherwise |
 | `VAULT_ADDR`, `VAULT_PREFIX` | your own Vault, and the path its keys live under (`kv/selan/`) |
 | `KEYS_VAULT_ROLE_ID`, `KEYS_VAULT_SECRET_ID` | with `own`: selan-keys' AppRole on your Vault |

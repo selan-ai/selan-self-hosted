@@ -190,6 +190,15 @@ read_settings() {
   local cidr='(private_ranges|[0-9a-f.:/]+)'
   [[ "$ALLOWED" =~ ^$cidr( $cidr)*$ ]] || fail "ALLOWED_CIDRS is private_ranges or CIDRs, separated by spaces"
 
+  # What launch settings may hand developers' apps, matched by exact URL or key: whatever else control sends is dropped.
+  CONNECTORS=$(setting LAUNCH_CONNECTORS)
+  CONNECTORS=${CONNECTORS:-$(own_connectors "$GATEWAY_HOST")}
+  MARKETPLACES=$(setting LAUNCH_MARKETPLACES)
+  DEFAULTS=$(setting LAUNCH_SETTINGS_DEFAULTS)
+  local list="^[^'[:space:]]*\$"
+  [[ "$CONNECTORS$MARKETPLACES$DEFAULTS" =~ $list ]] ||
+    fail "LAUNCH_CONNECTORS, LAUNCH_MARKETPLACES and LAUNCH_SETTINGS_DEFAULTS are lists separated by commas, with no spaces or quotes"
+
   CONTROL=$(setting CONTROL_BASE_URL)
   AUTH=$(setting AUTH_BASE_URL)
   for url in "$CONTROL" "$AUTH"; do
@@ -212,6 +221,15 @@ read_settings() {
   say "keys     https://$KEYS_HOST (selan-keys, the only part that reads the vault)"
   say "listens  $BIND_ADDR:443 (TLS: $TLS_SAID), answering $ALLOWED"
   if [ -n "$OWN_VAULT" ]; then say "vault    yours, $OWN_VAULT"; else say "vault    OpenBao, on this server"; fi
+}
+
+# The connectors this release's gateway serves by itself, at their URLs on it; Google's are the company's to add.
+GATEWAY_CONNECTORS="selan slack-bot gitlab github figma postgresql"
+
+own_connectors() {
+  local slug urls=""
+  for slug in $GATEWAY_CONNECTORS; do urls+="${urls:+,}https://$1/$slug/mcp"; done
+  printf '%s' "$urls"
 }
 
 # Each one-time token from Add server: needed on the first run, gone from .env once used.
@@ -343,10 +361,13 @@ write_env() {
       printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
     fi
     put ALLOWED_CIDRS "$ALLOWED"
+    put_set LAUNCH_CONNECTORS "$CONNECTORS"
+    put_set LAUNCH_MARKETPLACES "$MARKETPLACES"
+    put_set LAUNCH_SETTINGS_DEFAULTS "$DEFAULTS"
     [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
     [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
-    one_time SELAN_REGISTRATION_TOKEN "$TOKEN"
-    one_time SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
+    put_set SELAN_REGISTRATION_TOKEN "$TOKEN"
+    put_set SELAN_KEYS_REGISTRATION_TOKEN "$KEYS_TOKEN"
     put PROXY_KEYS_TOKEN "$PROXY_KEYS_TOKEN"
     put GATEWAY_KEYS_TOKEN "$GATEWAY_KEYS_TOKEN"
     put GATEWAY_DB_PASSWORD "$GATEWAY_DB_PASSWORD"
@@ -370,9 +391,9 @@ put() {
   export "$1=$2"
 }
 
-# A registration token is written while it is still to be used, and once used is neither in .env nor set:
-# the proxy refuses a blank one, so compose passes it only when it is there.
-one_time() {
+# Written only when it has a value, and otherwise neither in .env nor set: the proxy refuses a blank one, so
+# compose passes it only when it is there (a used registration token, an empty launch allowlist).
+put_set() {
   if [ -n "$2" ]; then put "$1" "$2"; else unset "$1"; fi
 }
 
