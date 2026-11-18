@@ -11,20 +11,20 @@ against its cosign signature first, so the tag decides exactly what your server 
 
 ## Install
 
-**Add server** shows one line, with a release tag and two one-time tokens, one for the proxy and the
-gateway and one for selan-keys:
+**Add server** shows one line, with a release tag and a registration token for the proxy, the
+gateway and selan-keys:
 
 ```sh
-export SELAN_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
+export SELAN_REGISTRATION_TOKEN=selanreg_…; [ -d /opt/selan ] || sudo git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 ```
 
-Each token is shown once and works once. It travels in the environment, never on a command line. To read
+The token is shown once and lasts an hour. It travels in the environment, never on a command line. To read
 the code first, read this repository at that tag (`https://github.com/selan-ai/selan-self-hosted/tree/<tag>`),
-or run the `git clone` half alone, read `/opt/selan`, then the `sudo` half.
+or run the `git clone` half alone, read `/opt/selan`, then the `install.sh` half.
 
-It needs `git` (`apt-get install -y git`) and a user that can write `/opt`: as a user that cannot, run
-`sudo install -d -o "$USER" /opt/selan` first, or run the line from a root shell. `install.sh` then makes
-`/opt/selan` root's, since the unseal key and root's own scripts live in it.
+It needs `git` (`apt-get install -y git`). The clone is root's, since the unseal key and root's own
+scripts live in `/opt/selan`, and it is skipped when `/opt/selan` is already there, so a new token after
+a failed install runs `install.sh` again.
 
 ## What runs where
 

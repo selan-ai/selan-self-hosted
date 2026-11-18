@@ -2,7 +2,7 @@
 # Installs Selan's proxy, MCP gateway and selan-keys on this server, inside the company's VPN, with its vault,
 # from the checkout it sits in: a release tag of this repository the company chose and read first.
 #
-#   export SELAN_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 \
+#   export SELAN_REGISTRATION_TOKEN=selanreg_...; [ -d /opt/selan ] || sudo git clone --depth 1 \
 #     --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan &&
 #     sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 #
