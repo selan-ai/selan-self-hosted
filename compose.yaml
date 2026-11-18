@@ -4,7 +4,7 @@ name: selan
 
 services:
   proxy:
-    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-proxy:0.1.0@sha256:1119c47af44f904bb6d559acca559e793dbfb916d489310d8513b40bfc1a6534
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-proxy:0.1.1@sha256:e3152e20e2581a609e9b862669ad50a7f818174d11fba556ec28353fd6046882
     restart: unless-stopped
     environment:
       PROXY_MODE: self-hosted
