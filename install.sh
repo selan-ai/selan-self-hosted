@@ -191,14 +191,14 @@ read_settings() {
   [[ "$ALLOWED" =~ ^$cidr( $cidr)*$ ]] || fail "ALLOWED_CIDRS is private_ranges or CIDRs, separated by spaces"
 
   # What launch settings may hand developers' apps, matched by exact URL or key: whatever else control sends is dropped.
-  LAUNCH_CONNECTORS=$(setting LAUNCH_CONNECTORS)
-  LAUNCH_CONNECTORS=${LAUNCH_CONNECTORS:-$(own_connectors "$GATEWAY_HOST")}
-  LAUNCH_MARKETPLACES=$(setting LAUNCH_MARKETPLACES)
-  LAUNCH_SETTINGS_DEFAULTS=$(setting LAUNCH_SETTINGS_DEFAULTS)
-  local name
-  for name in LAUNCH_CONNECTORS LAUNCH_MARKETPLACES LAUNCH_SETTINGS_DEFAULTS; do
-    [[ "${!name}" =~ ^[^\'[:space:]]*$ ]] || fail "$name is a list separated by commas, with no spaces or quotes"
-  done
+  CONNECTORS=$(setting LAUNCH_CONNECTORS)
+  CONNECTORS=${CONNECTORS:-$(own_connectors "$GATEWAY_HOST")}
+  MARKETPLACES=$(setting LAUNCH_MARKETPLACES)
+  DEFAULTS=$(setting LAUNCH_SETTINGS_DEFAULTS)
+  local list="^[^'[:space:]]*\$" said='is a list separated by commas, with no spaces or quotes'
+  [[ "$CONNECTORS" =~ $list ]] || fail "LAUNCH_CONNECTORS $said"
+  [[ "$MARKETPLACES" =~ $list ]] || fail "LAUNCH_MARKETPLACES $said"
+  [[ "$DEFAULTS" =~ $list ]] || fail "LAUNCH_SETTINGS_DEFAULTS $said"
 
   CONTROL=$(setting CONTROL_BASE_URL)
   AUTH=$(setting AUTH_BASE_URL)
@@ -362,9 +362,9 @@ write_env() {
       printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
     fi
     put ALLOWED_CIDRS "$ALLOWED"
-    put_set LAUNCH_CONNECTORS "$LAUNCH_CONNECTORS"
-    put_set LAUNCH_MARKETPLACES "$LAUNCH_MARKETPLACES"
-    put_set LAUNCH_SETTINGS_DEFAULTS "$LAUNCH_SETTINGS_DEFAULTS"
+    put_set LAUNCH_CONNECTORS "$CONNECTORS"
+    put_set LAUNCH_MARKETPLACES "$MARKETPLACES"
+    put_set LAUNCH_SETTINGS_DEFAULTS "$DEFAULTS"
     [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
     [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
     put_set SELAN_REGISTRATION_TOKEN "$TOKEN"
