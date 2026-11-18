@@ -82,7 +82,7 @@ services:
   # with SELAN_TLS=dns, where compose.dns.yaml adds `egress` for Let's Encrypt and the DNS provider's API.
   # Caddy built with the DNS provider modules (caddy/Dockerfile), signed by this repository's CI.
   caddy:
-    image: ${SELAN_CADDY_IMAGE:?no Caddy build is pinned in this commit yet; README, Upgrade}
+    image: europe-docker.pkg.dev/selan-prod/selan-public/caddy@sha256:730fda830eeca43af92111b5c023def2dc73f2fb084f54667c725146726b4b97
     restart: unless-stopped
     environment:
       SELAN_PROXY_HOST: ${SELAN_PROXY_HOST:?}

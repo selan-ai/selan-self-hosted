@@ -166,7 +166,7 @@ cosign verify --certificate-identity-regexp '<identity from signers.txt>' \
 ```
 
 Until the first release of each, `compose.yaml` names it as `${SELAN_PROXY_IMAGE:?…}`,
-`${SELAN_GATEWAY_IMAGE:?…}`, `${SELAN_KEYS_IMAGE:?…}` or `${SELAN_CADDY_IMAGE:?…}`, which refuses to start: there is nothing to run yet.
+`${SELAN_GATEWAY_IMAGE:?…}` or `${SELAN_KEYS_IMAGE:?…}`, which refuses to start: there is nothing to run yet.
 
 ## Backups
 
