@@ -87,7 +87,7 @@ services:
   # VAULT_PREFIX. The proxy and the gateway ask it with their own token; the admin's browser reaches it at
   # keys.<domain> through Caddy. It registers with control with a registration token of its own.
   keys:
-    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-keys:0.1.4@sha256:83f6d5b7e5e2f218509fcb00bd1e09cc49d2c0c3c960d79682587244c4375dce
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-keys:0.1.5@sha256:b1fc3b21084606c3bbb62577d1a393868745dce7304a5aed9b30ed5c412e3c92
     restart: unless-stopped
     environment:
       PORT: "8080"
