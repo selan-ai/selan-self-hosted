@@ -57,6 +57,7 @@ allow only Selan and the providers built into their image, and selan-keys calls 
 | [`openbao.hcl`](openbao.hcl) | OpenBao's storage (files in the `selan_openbao-data` volume) and listener |
 | [`unseal-watch.sh`](unseal-watch.sh) | the `unseal` service: unseals OpenBao whenever it answers sealed |
 | [`unseal.sh`](unseal.sh) | unseals OpenBao by hand, with the unseal service stopped |
+| [`selan-keys.sh`](selan-keys.sh) | `/usr/local/bin/selan-keys`, which `install.sh` installs: runs selan-keys in its container, as `sudo selan-keys import` |
 | [`.env.example`](.env.example) | every setting `install.sh` writes |
 
 ## VPN required
@@ -144,6 +145,8 @@ KEYS_VAULT_SECRET_ID='...'
 The AppRole's policy allows `kv/data/selan/*` (create, read, update, delete) and `kv/metadata/selan/*`
 (read, list, delete) on a KV v2 engine mounted at `kv/`, and nothing else. `install.sh` changes nothing
 in your Vault, and OpenBao does not run.
+
+Keys Selan already holds move into your vault with `sudo selan-keys import` on this server, which prints each key as it is stored.
 
 ## Upgrade
 
@@ -248,7 +251,7 @@ every command line ran in some case and every `fail` ran as a refusal. Run the c
 
 | Case | Host | What it proves |
 |---|---|---|
-| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: every image's cosign signature checked, three registrations with their public keys (selan-keys' sealing key too) and signed polls, keys 0600 in each volume, files root 0600, selan-keys reads a key with its AppRole for the proxy's token and refuses the gateway's and a stranger's, only selan-keys reaches the vault, only the gateway its Postgres, the vault and Caddy have no way out; a re-run changes nothing; OpenBao **restarted** (by compose or docker) is unsealed by the unseal service with nobody's hands, and with that service stopped by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data, one without an unseal key and one without a root token are refused |
+| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: every image's cosign signature checked, three registrations with their public keys (selan-keys' sealing key too) and signed polls, keys 0600 in each volume, files root 0600, selan-keys reads a key with its AppRole for the proxy's token and refuses the gateway's and a stranger's, only selan-keys reaches the vault, only the gateway its Postgres, the vault and Caddy have no way out; `sudo selan-keys import` opens an import in the keys container from any directory, on a terminal and from a pipe; a re-run changes nothing and writes a changed `selan-keys` again; OpenBao **restarted** (by compose or docker) is unsealed by the unseal service with nobody's hands, and with that service stopped by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data, one without an unseal key and one without a root token are refused |
 | `own-vault` | Ubuntu 24.04 | **your own Vault** (an OpenBao dev server standing in): no OpenBao runs, the Vault's policies, auth methods and AppRole are unchanged, selan-keys reads a key through it; a missing or malformed address, role id or secret id is refused; a re-run changes nothing |
 | `dns` | Ubuntu 24.04 | **DNS-01**: an unknown provider and a missing or malformed token are refused; with Caddy built from `caddy/`, Caddy gets a way out and asks the provider's API for the challenge record (CI's token is refused there, so no certificate); the token stays out of output, Caddy's log and its saved config; `install.sh` fails plainly when `/readyz` does not come |
 | `own-ca` | Ubuntu 24.04 | **your own CA**: missing paths, missing files and files that are not PEM are refused; every name answers with that CA's certificate, checked against it alone; re-runs change nothing |

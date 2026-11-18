@@ -2,7 +2,8 @@
 # OpenBao on this server, registration tokens present, TLS from Caddy's own CA: install.sh brings the stack
 # up (checking OpenBao's cosign signature), it registers, only selan-keys reaches the vault, a re-run
 # changes nothing, OpenBao restarted is unsealed by the unseal service with nobody's hands (and, with that
-# service stopped, by unseal.sh and by a re-run), and a wrong signer is refused.
+# service stopped, by unseal.sh and by a re-run), `sudo selan-keys import` reaches selan-keys from any directory,
+# and a wrong signer is refused.
 # shellcheck source=../lib.sh
 . "$(dirname "$0")/../lib.sh"
 
@@ -58,6 +59,16 @@ answer=$(key_read "$(printf '0%.0s' $(seq 64))" ci-key)
 [[ "$answer" == *' 401' ]] || fail "an unknown token was not refused: $answer"
 pass "selan-keys reads the vault with its AppRole: the proxy's token reads a model key, the gateway's is refused it, a stranger's is refused"
 
+wrapper=/usr/local/bin/selan-keys
+[ "$(mode "$wrapper")" = "root 755" ] || fail "$wrapper is $(mode "$wrapper"), not root 755"
+cmp -s selan-keys.sh "$wrapper" || fail "$wrapper is not selan-keys.sh"
+# As sudo runs it: from another directory, with PATH and HOME alone. On a terminal first, which opens the import.
+(cd / && sleep 12 | env -i PATH="$PATH" HOME=/root timeout 10 script -qefc 'selan-keys import' /tmp/import.log >/dev/null) || true
+grep -q 'import open for 10 minutes' /tmp/import.log || fail "selan-keys import on a terminal opened no import: $(tail -n 3 /tmp/import.log)"
+answer=$(cd / && env -i PATH="$PATH" HOME=/root timeout 30 selan-keys import </dev/null 2>&1) && fail "a second import opened beside the first"
+grep -q 'an import is open already' <<<"$answer" || fail "selan-keys import without a terminal did not reach selan-keys: $answer"
+pass "sudo selan-keys import, from any directory, opens an import in the keys container and prints it on a terminal, and reaches it from a pipe"
+
 [ -z "$(docker port selan-openbao-1)" ] || fail "openbao publishes a port: $(docker port selan-openbao-1)"
 vault_ip=$(ip_on openbao vault)
 curl -s --max-time 4 "http://$vault_ip:8200/v1/sys/health" >/dev/null && fail "the host reaches the vault at $vault_ip"
@@ -96,9 +107,9 @@ code=$(docker run --rm --network selan_front -e "C=$(ip_on caddy front)" --entry
   'curl -sk -o /dev/null -w "%{http_code}" --resolve gw.selan-ci.test:443:$C https://gw.selan-ci.test/readyz')
 [ "$code" = 200 ] || fail "a private address was refused by Caddy ($code)"
 
-before=$(sha256sum openbao-init.json .env)
+before=$(sha256sum openbao-init.json .env "$wrapper")
 install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/dev/null
-[ "$before" = "$(sha256sum openbao-init.json .env)" ] || fail "a second run changed openbao-init.json or .env"
+[ "$before" = "$(sha256sum openbao-init.json .env "$wrapper")" ] || fail "a second run changed openbao-init.json, .env or $wrapper"
 pass "a second run of install.sh, without the used tokens, changes nothing and is ready again"
 
 unsealed() { # unsealed <seconds>: OpenBao answers unsealed within that long
@@ -141,10 +152,12 @@ compose exec -T openbao bao status >/dev/null 2>&1 || fail "a re-run of install.
 pass "a re-run of install.sh on a sealed vault unseals it, starts the unseal service again and changes nothing"
 
 old=$(grep '^KEYS_VAULT_SECRET_ID=' .env)
+printf '# changed by hand\n' >>"$wrapper"
 install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN KEYS_VAULT_SECRET_ID=not-a-secret-id >/dev/null
+cmp -s selan-keys.sh "$wrapper" || fail "a re-run left a changed $wrapper as it was"
 [ "$old" != "$(grep '^KEYS_VAULT_SECRET_ID=' .env)" ] || fail "a secret id that no longer logs in was kept"
 ready keys -k || fail "selan-keys is not ready with its new secret id"
-pass "a secret id that no longer logs in is replaced, and selan-keys is ready with the new one"
+pass "a secret id that no longer logs in is replaced, and selan-keys is ready with the new one; a changed $wrapper is written again"
 
 cp signers.txt /tmp/signers.txt
 sed -i 's#github\\.com/openbao/openbao/#github\\.com/someone-else/openbao/#' signers.txt

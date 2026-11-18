@@ -504,6 +504,14 @@ start() {
   compose up -d --remove-orphans
 }
 
+# `sudo selan-keys import`, which Selan's Own proxy dialog has the owner run: selan-keys.sh, which names /opt/selan.
+keys_command() {
+  [ "$DIR" = /opt/selan ] || return 0
+  # A Mac may have no /usr/local/bin; Homebrew's own is group-writable, so an existing one is left as it is.
+  [ -d /usr/local/bin ] || install -d -m 0755 /usr/local/bin
+  cmp -s "$DIR/selan-keys.sh" /usr/local/bin/selan-keys || install -m 0755 "$DIR/selan-keys.sh" /usr/local/bin/selan-keys
+}
+
 # SELAN_UNSIGNED_OK names exact image references to start unchecked: CI's stand-ins, never a release.
 unsigned_ok() { [[ " ${SELAN_UNSIGNED_OK:-} " == *" $1 "* ]]; }
 
@@ -645,6 +653,7 @@ main() {
   read_settings
   if [ -n "$OWN_VAULT" ]; then own_vault; else openbao; fi
   start
+  keys_command
   wait_ready
   check_outside
   step "Done"
