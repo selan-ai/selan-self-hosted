@@ -18,6 +18,10 @@ services:
       SELAN_KEYS_URL: http://keys:8080
       SELAN_KEYS_TOKEN: ${PROXY_KEYS_TOKEN:?}
       # No ALLOWED_CIDRS here: the proxy publishes no port, and Caddy refuses a client outside them first.
+      # The company's own allowlist for launch settings: what control sends beyond it never reaches a developer.
+      LAUNCH_CONNECTORS: ${LAUNCH_CONNECTORS:-}
+      LAUNCH_MARKETPLACES: ${LAUNCH_MARKETPLACES:-}
+      LAUNCH_SETTINGS_DEFAULTS: ${LAUNCH_SETTINGS_DEFAULTS:-}
     volumes:
       - proxy-identity:/var/lib/selan-proxy
     networks: [inside, egress]

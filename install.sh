@@ -190,6 +190,16 @@ read_settings() {
   local cidr='(private_ranges|[0-9a-f.:/]+)'
   [[ "$ALLOWED" =~ ^$cidr( $cidr)*$ ]] || fail "ALLOWED_CIDRS is private_ranges or CIDRs, separated by spaces"
 
+  # What launch settings may hand developers' apps, matched by exact URL or key: whatever else control sends is dropped.
+  LAUNCH_CONNECTORS=$(setting LAUNCH_CONNECTORS)
+  LAUNCH_CONNECTORS=${LAUNCH_CONNECTORS:-$(own_connectors "$GATEWAY_HOST")}
+  LAUNCH_MARKETPLACES=$(setting LAUNCH_MARKETPLACES)
+  LAUNCH_SETTINGS_DEFAULTS=$(setting LAUNCH_SETTINGS_DEFAULTS)
+  local name
+  for name in LAUNCH_CONNECTORS LAUNCH_MARKETPLACES LAUNCH_SETTINGS_DEFAULTS; do
+    [[ "${!name}" =~ ^[^\'[:space:]]*$ ]] || fail "$name is a list separated by commas, with no spaces or quotes"
+  done
+
   CONTROL=$(setting CONTROL_BASE_URL)
   AUTH=$(setting AUTH_BASE_URL)
   for url in "$CONTROL" "$AUTH"; do
@@ -212,6 +222,15 @@ read_settings() {
   say "keys     https://$KEYS_HOST (selan-keys, the only part that reads the vault)"
   say "listens  $BIND_ADDR:443 (TLS: $TLS_SAID), answering $ALLOWED"
   if [ -n "$OWN_VAULT" ]; then say "vault    yours, $OWN_VAULT"; else say "vault    OpenBao, on this server"; fi
+}
+
+# The connectors this release's gateway serves without Google Cloud, each at its URL on the company's own gateway.
+GATEWAY_CONNECTORS="selan slack-bot gitlab github figma postgresql"
+
+own_connectors() {
+  local slug urls=""
+  for slug in $GATEWAY_CONNECTORS; do urls+="${urls:+,}https://$1/$slug/mcp"; done
+  printf '%s' "$urls"
 }
 
 # Each one-time token from Add server: needed on the first run, gone from .env once used.
@@ -343,6 +362,9 @@ write_env() {
       printf "COMPOSE_FILE='%s'\n" "$DIR/compose.yaml:$DIR/compose.dns.yaml"
     fi
     put ALLOWED_CIDRS "$ALLOWED"
+    put LAUNCH_CONNECTORS "$LAUNCH_CONNECTORS"
+    put LAUNCH_MARKETPLACES "$LAUNCH_MARKETPLACES"
+    put LAUNCH_SETTINGS_DEFAULTS "$LAUNCH_SETTINGS_DEFAULTS"
     [ -z "$CONTROL" ] || put CONTROL_BASE_URL "$CONTROL"
     [ -z "$AUTH" ] || put AUTH_BASE_URL "$AUTH"
     one_time SELAN_REGISTRATION_TOKEN "$TOKEN"

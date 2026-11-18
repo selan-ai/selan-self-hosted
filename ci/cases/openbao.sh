@@ -17,6 +17,12 @@ pass "install.sh finished, OpenBao's cosign signature checked"
 [ "$(grep -cE "^(PROXY|GATEWAY)_KEYS_TOKEN='[0-9a-f]{64}'$" .env)" = 2 ] || fail ".env has no caller token for the proxy and the gateway each"
 pass ".env and openbao-init.json are root 0600, the used tokens left .env, and each caller has its own selan-keys token"
 
+[[ ",$(saved LAUNCH_CONNECTORS)," == *,https://mcp.selan-ci.test/selan/mcp,* ]] ||
+  fail ".env's LAUNCH_CONNECTORS does not admit Selan's own MCP on this gateway: $(saved LAUNCH_CONNECTORS)"
+given=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' selan-proxy-1 | sed -n 's/^LAUNCH_CONNECTORS=//p')
+[ "$given" = "$(saved LAUNCH_CONNECTORS)" ] || fail "the proxy was given LAUNCH_CONNECTORS '$given', not .env's"
+pass "the proxy's launch allowlist admits the connectors on this server's own gateway by default"
+
 for host in gw mcp keys; do
   code=$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$host.selan-ci.test:443:127.0.0.1" "https://$host.selan-ci.test/readyz")
   [ "$code" = 200 ] || fail "https://$host.selan-ci.test/readyz answered $code"
