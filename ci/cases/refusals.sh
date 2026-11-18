@@ -24,7 +24,7 @@ refused 1 'SELAN_TLS is not set' -u SELAN_TLS
 refused 1 "SELAN_TLS is dns or files .*, not 'acme'" SELAN_TLS=acme
 refused 1 'ALLOWED_CIDRS is private_ranges or' 'ALLOWED_CIDRS=10.0.0.0/8;rm'
 refused 1 "'ftp://control' is not a base URL" CONTROL_BASE_URL=ftp://control
-refused 1 'LAUNCH_CONNECTORS is a list separated by commas' 'LAUNCH_CONNECTORS=https://a.test/mcp https://b.test/mcp'
+refused 1 'LAUNCH_SETTINGS_DEFAULTS are lists separated by commas' 'LAUNCH_CONNECTORS=https://a.test/mcp https://b.test/mcp'
 refused 1 'SELAN_VAULT is not set' -u SELAN_VAULT
 refused 1 "SELAN_VAULT is openbao or own, not 'aws'" SELAN_VAULT=aws
 refused 1 'VAULT_PREFIX is a path ending in /' VAULT_PREFIX=kv/selan

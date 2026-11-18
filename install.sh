@@ -195,10 +195,9 @@ read_settings() {
   CONNECTORS=${CONNECTORS:-$(own_connectors "$GATEWAY_HOST")}
   MARKETPLACES=$(setting LAUNCH_MARKETPLACES)
   DEFAULTS=$(setting LAUNCH_SETTINGS_DEFAULTS)
-  local list="^[^'[:space:]]*\$" said='is a list separated by commas, with no spaces or quotes'
-  [[ "$CONNECTORS" =~ $list ]] || fail "LAUNCH_CONNECTORS $said"
-  [[ "$MARKETPLACES" =~ $list ]] || fail "LAUNCH_MARKETPLACES $said"
-  [[ "$DEFAULTS" =~ $list ]] || fail "LAUNCH_SETTINGS_DEFAULTS $said"
+  local list="^[^'[:space:]]*\$"
+  [[ "$CONNECTORS$MARKETPLACES$DEFAULTS" =~ $list ]] ||
+    fail "LAUNCH_CONNECTORS, LAUNCH_MARKETPLACES and LAUNCH_SETTINGS_DEFAULTS are lists separated by commas, with no spaces or quotes"
 
   CONTROL=$(setting CONTROL_BASE_URL)
   AUTH=$(setting AUTH_BASE_URL)
