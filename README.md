@@ -15,7 +15,7 @@ against its cosign signature first, so the tag decides exactly what your server 
 gateway and selan-keys:
 
 ```sh
-export SELAN_REGISTRATION_TOKEN=selanreg_…; [ -d /opt/selan ] || sudo git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
+export SELAN_REGISTRATION_TOKEN=selanreg_…; { [ -d /opt/selan ] || sudo git clone --depth 1 --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan; } && sudo git -C /opt/selan fetch -q --depth 1 origin tag <tag> && sudo git -C /opt/selan checkout -q <tag> && sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 ```
 
 The token is shown once and lasts an hour. It travels in the environment, never on a command line. To read
@@ -23,8 +23,8 @@ the code first, read this repository at that tag (`https://github.com/selan-ai/s
 or run the `git clone` half alone, read `/opt/selan`, then the `install.sh` half.
 
 It needs `git` (`apt-get install -y git`). The clone is root's, since the unseal key and root's own
-scripts live in `/opt/selan`, and it is skipped when `/opt/selan` is already there, so a new token after
-a failed install runs `install.sh` again.
+scripts live in `/opt/selan`. It is skipped when `/opt/selan` is already there, which is moved to the
+line's tag instead, so a new token after a failed install runs `install.sh` again, at that tag.
 
 ## What runs where
 
@@ -225,7 +225,7 @@ This repository is also a Claude Code plugin:
 | Skill | Where it runs the stack |
 |---|---|
 | `self-host-local` | this machine, with Docker |
-| `self-host-server` | a server of yours over SSH, such as a Hostinger VPS found through the Hostinger MCP server |
+| `self-host-server` | a server of yours over SSH, such as a Hostinger VPS found through the Hostinger MCP server: the VPN, DNS and TLS with it, then moving keys, turning it on and upgrades |
 
 Both show the tag, `compose.yaml` and `install.sh` first, ask which TLS to use, and have you run the line with the tokens yourself:
 Claude never sees a token or the vault's material. They finish with one real request through the
