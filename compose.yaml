@@ -26,7 +26,7 @@ services:
   # on Google Cloud need are not mounted here, so they get fixed stand-ins. GitLab, GitHub and Slack sign-ins
   # need OAuth apps of the company's own, which this release does not configure.
   gateway:
-    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-mcp-gateway:0.1.0@sha256:6d37d624d6ad6257a31e52c3827a7ae8e794a871b538644fc18ff21b06a01e01
+    image: europe-docker.pkg.dev/selan-prod/selan-public/selan-mcp-gateway:0.1.1@sha256:5bc0a962e5ac93db26d0ef240cce510b30c0822ba96f85594634661def04a018
     restart: unless-stopped
     depends_on:
       postgres:

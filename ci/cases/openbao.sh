@@ -36,6 +36,9 @@ for component in PROXY GATEWAY KEYS; do
   grep -q "Poll from OWN_SERVERS_COMPONENT_$component, signed" <<<"$(control_log)" || fail "the ${component,,} never polled control, signed"
 done
 pass "the proxy, the gateway and selan-keys registered once each with their tokens, keep their keys at 0600 in their own volumes, and poll control signed"
+grep -q 'ResolveSession, signed: no session' <<<"$(control_log)" || fail "the gateway's boot probe did not ask control, signed"
+! grep -q '^selan-auth ' <<<"$(control_log)" || fail "a component asked selan-auth, which takes no server's token: $(control_log)"
+pass "the gateway looks sessions up through control, signed, and never asks selan-auth"
 
 bao_root=$(sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p' openbao-init.json)
 # shellcheck disable=SC2016 # BAO_TOKEN is read inside the container, from stdin.
