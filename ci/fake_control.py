@@ -19,10 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 SERVICE = "/control.v1.OwnServersService/"
 SELAN_AUTH = "/auth.v1.SessionService/"
 COMPONENTS = {1: "OWN_SERVERS_COMPONENT_PROXY", 2: "OWN_SERVERS_COMPONENT_GATEWAY", 3: "OWN_SERVERS_COMPONENT_KEYS"}
+# One token registers any component, as control's does; selan-keys may bring a second of its own.
 TOKENS = {
-    "OWN_SERVERS_COMPONENT_PROXY": os.environ["EXPECTED_TOKEN"],
-    "OWN_SERVERS_COMPONENT_GATEWAY": os.environ["EXPECTED_TOKEN"],
-    "OWN_SERVERS_COMPONENT_KEYS": os.environ["EXPECTED_KEYS_TOKEN"],
+    "OWN_SERVERS_COMPONENT_PROXY": {os.environ["EXPECTED_TOKEN"]},
+    "OWN_SERVERS_COMPONENT_GATEWAY": {os.environ["EXPECTED_TOKEN"]},
+    "OWN_SERVERS_COMPONENT_KEYS": {os.environ["EXPECTED_TOKEN"], os.environ["EXPECTED_KEYS_TOKEN"]},
 }
 registered = set()
 
@@ -85,7 +86,7 @@ def register(body):
     component = COMPONENTS.get(body.get(2, 0))
     if component is None:
         return ("invalid_argument", "component"), None
-    if body.get(1, b"").decode() != TOKENS[component]:
+    if body.get(1, b"").decode() not in TOKENS[component]:
         return ("permission_denied", "unknown registration token"), component
     if component in registered:
         return ("permission_denied", "token already used for this component"), component

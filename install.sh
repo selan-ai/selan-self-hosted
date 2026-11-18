@@ -2,9 +2,9 @@
 # Installs Selan's proxy, MCP gateway and selan-keys on this server, inside the company's VPN, with its vault,
 # from the checkout it sits in: a release tag of this repository the company chose and read first.
 #
-#   export SELAN_REGISTRATION_TOKEN=selanreg_... SELAN_KEYS_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 \
+#   export SELAN_REGISTRATION_TOKEN=selanreg_...; git clone --depth 1 \
 #     --branch <tag> https://github.com/selan-ai/selan-self-hosted /opt/selan &&
-#     sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN /opt/selan/install.sh
+#     sudo --preserve-env=SELAN_REGISTRATION_TOKEN /opt/selan/install.sh
 #
 # It fetches nothing of this repository and nothing from selan.ai. Safe to run again: it keeps what is
 # set up, and run from a newer tag it upgrades. Settings come from the environment, else .env, else a
@@ -25,7 +25,7 @@ fail() {
 }
 step() { printf '\n==> %s\n' "$*"; }
 
-[ "$(id -u)" = 0 ] || fail "run as root: sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN $0"
+[ "$(id -u)" = 0 ] || fail "run as root: sudo --preserve-env=SELAN_REGISTRATION_TOKEN $0"
 umask 077
 
 # ---------------------------------------------------------------- tools and Docker
@@ -198,7 +198,9 @@ read_settings() {
   done
 
   TOKEN=$(registration_token SELAN_REGISTRATION_TOKEN)
-  KEYS_TOKEN=$(registration_token SELAN_KEYS_REGISTRATION_TOKEN)
+  # Add server's one token registers every part within its hour; a separate one for selan-keys is still taken.
+  KEYS_TOKEN=$(second_token SELAN_KEYS_REGISTRATION_TOKEN)
+  KEYS_TOKEN=${KEYS_TOKEN:-$TOKEN}
   PROXY_KEYS_TOKEN=$(caller_token PROXY_KEYS_TOKEN)
   GATEWAY_KEYS_TOKEN=$(caller_token GATEWAY_KEYS_TOKEN)
   GATEWAY_DB_PASSWORD=$(caller_token GATEWAY_DB_PASSWORD)
@@ -217,7 +219,15 @@ registration_token() {
   local token=${!1:-}
   [ -n "$token" ] || token=$(saved "$1")
   [ -n "$token" ] || [ -f "$ENV_FILE" ] ||
-    fail "$1 is not set: copy the line from Settings › Own servers › Add server in Selan"
+    fail "$1 is not set: copy the line from Settings › General › Own proxy › Add server in Selan"
+  [ -z "$token" ] || [[ "$token" =~ ^selanreg_[A-Za-z0-9_-]+$ ]] || fail "$1 does not look like selanreg_…"
+  printf '%s' "$token"
+}
+
+# A token for selan-keys alone, where one was set: never asked for, and checked like the first.
+second_token() {
+  local token=${!1:-}
+  [ -n "$token" ] || token=$(saved "$1")
   [ -z "$token" ] || [[ "$token" =~ ^selanreg_[A-Za-z0-9_-]+$ ]] || fail "$1 does not look like selanreg_…"
   printf '%s' "$token"
 }
@@ -619,7 +629,7 @@ main() {
   say "Tag:     $TAG ($COMMIT)"
   say "Files:   $DIR (settings in $DIR/.env, root only)"
   [ -n "$OWN_VAULT" ] || say "Vault:   OpenBao; unseal key and root token in $DIR/openbao-init.json (root only). Back it up off this server."
-  say "Selan shows this server under Settings › Own servers. README, \"Upgrade\", says how to move to a newer tag."
+  say "Selan shows this server under Settings › General › Own proxy. README, \"Upgrade\", says how to move to a newer tag."
 }
 
 main "$@"

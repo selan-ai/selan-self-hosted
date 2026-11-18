@@ -80,5 +80,5 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
 8. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v` deletes the
    vault's data with every key in it: say so and wait for a yes. Then
    `sudo systemctl disable selan-unseal`, delete `/etc/systemd/system/selan-unseal.service` and
-   `/opt/selan`, and remove the server under Settings › Own servers. Deleting the VPS is the person's
+   `/opt/selan`, and remove the server under Settings › General › Own proxy. Deleting the VPS is the person's
    decision, in hPanel.
