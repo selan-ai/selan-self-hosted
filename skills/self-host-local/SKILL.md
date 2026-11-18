@@ -32,7 +32,7 @@ and has the person run the one line. Claude never sees a registration token, `.e
    in themselves (on macOS, clone to a folder under `/Users` instead of `/opt/selan`):
    ```sh
    export SELAN_PROXY_HOST=gw.example.localhost SELAN_BIND_ADDR=127.0.0.1 SELAN_TLS=internal SELAN_VAULT=openbao SELAN_OUTSIDE_CHECK=no
-   export SELAN_REGISTRATION_TOKEN=selanreg_… SELAN_KEYS_REGISTRATION_TOKEN=selanreg_…; git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_KEYS_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_VAULT,SELAN_OUTSIDE_CHECK /opt/selan/install.sh
+   export SELAN_REGISTRATION_TOKEN=selanreg_…; [ -d /opt/selan ] || sudo git clone --depth 1 --branch TAG https://github.com/selan-ai/selan-self-hosted /opt/selan && sudo --preserve-env=SELAN_REGISTRATION_TOKEN,SELAN_PROXY_HOST,SELAN_BIND_ADDR,SELAN_TLS,SELAN_VAULT,SELAN_OUTSIDE_CHECK /opt/selan/install.sh
    ```
    It prints where OpenBao's unseal key and root token are (root only); tell them to keep a copy
    off this machine. `SELAN_OUTSIDE_CHECK=no` skips the check from the internet, which on a laptop
