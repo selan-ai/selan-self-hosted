@@ -224,7 +224,7 @@ read_settings() {
   if [ -n "$OWN_VAULT" ]; then say "vault    yours, $OWN_VAULT"; else say "vault    OpenBao, on this server"; fi
 }
 
-# The connectors this release's gateway serves without Google Cloud, each at its URL on the company's own gateway.
+# The connectors this release's gateway serves by itself, at their URLs on it; Google's are the company's to add.
 GATEWAY_CONNECTORS="selan slack-bot gitlab github figma postgresql"
 
 own_connectors() {
