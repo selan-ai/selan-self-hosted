@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Every image compose.yaml runs, the cosign image install.sh runs and caddy/Dockerfile builds from is
-# pinned by digest, and every pinned digest exists. Until their first release, selan-proxy, the gateway
-# and selan-keys may be the pending form instead, ${SELAN_PROXY_IMAGE:?...}, which refuses to start.
+# pinned by digest, and every pinned digest exists.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -13,9 +12,6 @@ images() {
 }
 while read -r image; do
   case "$image" in
-    "\${SELAN_PROXY_IMAGE:?"* | "\${SELAN_GATEWAY_IMAGE:?"* | "\${SELAN_KEYS_IMAGE:?"*)
-      echo "pending: ${image%%:?*}} has no release pinned yet"
-      ;;
     *@sha256:*)
       [[ "$image" =~ @sha256:[0-9a-f]{64}$ ]] || {
         echo "error: $image is not a full sha256 digest" >&2

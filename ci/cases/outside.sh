@@ -11,7 +11,7 @@ grep -q 'Installing from /opt/selan at v0.0.0-ci' /tmp/install.log || fail "inst
 grep -q 'Skipped: SELAN_OUTSIDE_CHECK=no.' /tmp/install.log || fail "SELAN_OUTSIDE_CHECK=no did not skip"
 pass "at a tag install.sh names it, and SELAN_OUTSIDE_CHECK=no skips the check"
 
-docker run -d --name fake-outside -p 127.0.0.1:8099:8099 -v "$root/ci:/ci:ro" "$stand_in" python /ci/fake_outside.py >/dev/null
+docker run -d --name fake-outside -p 127.0.0.1:8099:8099 -v "$root/ci:/ci:ro" "$probe" python /ci/fake_outside.py >/dev/null
 for _ in $(seq 20); do curl -s -o /dev/null http://127.0.0.1:8099/ && break; sleep 1; done
 check=(-u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN SELAN_OUTSIDE_CHECK=yes)
 

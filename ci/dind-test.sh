@@ -51,13 +51,6 @@ esac
 in_box 'git config --global safe.directory /src/.git && git init -q /opt/selan && git -C /opt/selan fetch -q --depth 1 file:///src HEAD &&
   git -C /opt/selan -c advice.detachedHead=false checkout -q FETCH_HEAD'
 in_box '! command -v docker' || { echo "FAIL: the image already has Docker; install.sh must install it" >&2; exit 1; }
-if [ "$case" = dns ] && grep -qF "image: \${SELAN_CADDY_IMAGE:?" compose.yaml; then
-  docker build -q -t selan-caddy:ci caddy >/dev/null
-  docker save -o "ci-out/selan-caddy.tar" selan-caddy:ci
-  docker cp ci-out/selan-caddy.tar "$box:/tmp/selan-caddy.tar"
-  rm -f ci-out/selan-caddy.tar
-fi
-
 if [ "$case" = systemd ]; then
   in_box 'bash /opt/selan/ci/cases/systemd.sh install </dev/null'
   docker restart "$box" >/dev/null

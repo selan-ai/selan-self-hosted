@@ -22,21 +22,31 @@ for host in gw mcp keys; do
 done
 pass "/readyz answers 200 through Caddy for the proxy, the gateway and selan-keys"
 [ "$(control_log | grep -c 'accepted')" = 3 ] || fail "control did not see exactly three registrations: $(control_log)"
-! control_log | grep -q refused || fail "control refused a registration: $(control_log)"
+! grep -q refused <<<"$(control_log)" || fail "control refused a registration: $(control_log)"
 for component in proxy gateway keys; do
-  for key in signing sealing; do
-    [ "$(compose exec -T "$component" stat -c '%a' "/var/lib/selan-$component/$key.key")" = 600 ] ||
-      fail "the $component's $key private key is not mode 600"
-  done
-  public=$(compose exec -T "$component" python -c "
-import base64, sys; sys.path.insert(0, '/ci'); from keys import ed25519_public, x25519_public
-read = lambda name: open('/var/lib/selan-$component/' + name, 'rb').read()
-print(base64.b64encode(ed25519_public(read('signing.key'))).decode(), base64.b64encode(x25519_public(read('sealing.key'))).decode())")
-  read -r signing sealing <<<"$public"
-  control_log | grep -q "OWN_SERVERS_COMPONENT_${component^^} at https://.*: accepted, signing $signing sealing $sealing" ||
-    fail "the $component did not register the public halves of its own Ed25519 and X25519 keys"
+  grep -q "RegisterServer from OWN_SERVERS_COMPONENT_${component^^} at https://.*selan-ci.test: accepted, signing " <<<"$(control_log)" ||
+    fail "the $component did not register at its https address with its public key"
+  loose=$(docker run --rm -v "selan_$component-identity:/d:ro" "$probe" find /d -type f ! -perm 600 ! -user 65532)
+  held=$(docker run --rm -v "selan_$component-identity:/d:ro" "$probe" find /d -type f -size +0)
+  [ -z "$loose" ] && [ -n "$held" ] || fail "the $component's identity volume holds no key, or one not 0600 and its own: $loose"
 done
-pass "the proxy, the gateway and selan-keys called RegisterServer once each, with their tokens and the public halves of both key pairs, whose private halves stay at 0600"
+grep -q 'OWN_SERVERS_COMPONENT_KEYS at https://.*: accepted, signing .* sealing ' <<<"$(control_log)" ||
+  fail "selan-keys did not register its sealing key"
+for component in PROXY GATEWAY KEYS; do
+  grep -q "Poll from OWN_SERVERS_COMPONENT_$component, signed" <<<"$(control_log)" || fail "the ${component,,} never polled control, signed"
+done
+pass "the proxy, the gateway and selan-keys registered once each with their tokens, keep their keys at 0600 in their own volumes, and poll control signed"
+
+bao_root=$(sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p' openbao-init.json)
+# shellcheck disable=SC2016 # BAO_TOKEN is read inside the container, from stdin.
+printf '%s' "$bao_root" | compose exec -T openbao sh -c 'BAO_TOKEN=$(cat) bao kv put kv/selan/ci-key value=not-a-key provider=openrouter' >/dev/null
+answer=$(key_read "$(saved PROXY_KEYS_TOKEN)" ci-key)
+[[ "$answer" == *'"value":"not-a-key"'*' 200' ]] || fail "the proxy's token did not read a key through selan-keys: $answer"
+answer=$(key_read "$(saved GATEWAY_KEYS_TOKEN)" ci-key)
+[[ "$answer" == *' 403' ]] || fail "the gateway's token read the proxy's key: $answer"
+answer=$(key_read "$(printf '0%.0s' $(seq 64))" ci-key)
+[[ "$answer" == *' 401' ]] || fail "an unknown token was not refused: $answer"
+pass "selan-keys reads the vault with its AppRole: the proxy's token reads a model key, the gateway's is refused it, a stranger's is refused"
 
 [ -z "$(docker port selan-openbao-1)" ] || fail "openbao publishes a port: $(docker port selan-openbao-1)"
 vault_ip=$(ip_on openbao vault)
@@ -50,8 +60,8 @@ for net in inside egress front bridge; do
     fail "a container on $net reaches the vault by name"
 done
 pass "the vault publishes no port and answers nothing from the host, inside, egress, front or the default bridge"
-for component in proxy gateway caddy; do
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "selan-$component-1" | grep -q '^VAULT_' &&
+for component in proxy gateway caddy postgres; do
+  grep -q '^VAULT_' <<<"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "selan-$component-1")" &&
     fail "the $component is given a VAULT_ setting"
 done
 for component in proxy gateway; do
@@ -60,6 +70,12 @@ for component in proxy gateway; do
 done
 reaches keys openbao 8200 || fail "selan-keys does not reach the vault"
 pass "only selan-keys reaches the vault: the proxy and the gateway have no VAULT_ setting and no route to it"
+for component in proxy keys caddy; do
+  reaches "$component" postgres 5432 && fail "the $component reaches the gateway's database"
+done
+reaches gateway postgres 5432 || fail "the gateway does not reach its database"
+[ -z "$(docker port selan-postgres-1)" ] || fail "postgres publishes a port"
+pass "only the gateway reaches its Postgres, which publishes no port"
 
 compose exec -T openbao wget -q -T 4 -O /dev/null http://1.1.1.1 >/dev/null 2>&1 && fail "the vault reaches the internet"
 compose exec -T caddy wget -q -T 4 -O /dev/null http://1.1.1.1 >/dev/null 2>&1 && fail "caddy reaches the internet"
@@ -78,14 +94,15 @@ pass "a second run of install.sh, without the used tokens, changes nothing and i
 compose restart openbao >/dev/null 2>&1
 compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed by itself"
 ./unseal.sh
-compose restart keys proxy gateway >/dev/null 2>&1
-for _ in $(seq 30); do
-  curl -sfk -o /dev/null --resolve gw.selan-ci.test:443:127.0.0.1 https://gw.selan-ci.test/readyz && break
-  sleep 2
+# selan-keys first: the proxy asks whether it is ready as it starts, and then only every five minutes.
+compose restart keys >/dev/null 2>&1
+for name in keys gw mcp; do
+  [ "$name" != gw ] || compose restart proxy gateway >/dev/null 2>&1
+  for _ in $(seq 60); do ready "$name" -k && break; sleep 2; done
+  ready "$name" -k || fail "$name is not ready after a restart and unseal"
 done
-curl -sfk -o /dev/null --resolve gw.selan-ci.test:443:127.0.0.1 https://gw.selan-ci.test/readyz || fail "not ready after a restart and unseal"
 [ "$(control_log | grep -c 'RegisterServer')" = 3 ] || fail "a restart registered again instead of keeping its identity"
-pass "after a restart OpenBao is sealed, unseal.sh opens it, the proxy is ready again and did not register again"
+pass "after a restart OpenBao is sealed, unseal.sh opens it, all three are ready again and did not register again"
 
 compose restart openbao >/dev/null 2>&1
 compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed by itself"

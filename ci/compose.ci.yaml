@@ -1,30 +1,31 @@
-# CI only: compose.yaml with stand-ins for the proxy, the gateway and selan-keys, and a fake control on
-# `egress`. Run with SELAN_PROXY_IMAGE, SELAN_GATEWAY_IMAGE and SELAN_KEYS_IMAGE set to the python image below.
+# CI only: compose.yaml's own images, beside a fake control on `egress` that serves TLS from ci/tls/, whose CA
+# the proxy, the gateway and selan-keys are given in place of the public ones.
+x-trust-ci-control: &trust-ci-control
+  depends_on: [fake-control]
+  environment:
+    SSL_CERT_FILE: /ci/tls/ca.pem
+  volumes:
+    - ./ci:/ci:ro
+
 services:
-  proxy:
-    command: ["python", "/ci/stand_in.py"]
-    environment:
-      STAND_IN_COMPONENT: proxy
-    volumes:
-      - ./ci:/ci:ro
-
+  proxy: *trust-ci-control
   gateway:
-    command: ["python", "/ci/stand_in.py"]
+    <<: *trust-ci-control
+    depends_on:
+      fake-control:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
-      STAND_IN_COMPONENT: gateway
-    volumes:
-      - ./ci:/ci:ro
-
-  keys:
-    command: ["python", "/ci/stand_in.py"]
-    environment:
-      STAND_IN_COMPONENT: keys
-    volumes:
-      - ./ci:/ci:ro
+      SSL_CERT_FILE: /ci/tls/ca.pem
+      AUTH_SERVER_URL: https://fake-control:8443
+  keys: *trust-ci-control
 
   fake-control:
     image: python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
     command: ["python", "/ci/fake_control.py"]
+    # Back after the systemd case's reboot, as Selan's control would be.
+    restart: unless-stopped
     environment:
       EXPECTED_TOKEN: selanreg_ci-stack-test
       EXPECTED_KEYS_TOKEN: selanreg_ci-keys-stack-test

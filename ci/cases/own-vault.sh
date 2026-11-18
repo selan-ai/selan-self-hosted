@@ -38,13 +38,15 @@ grep -qx "SELAN_VAULT='own'" .env || fail ".env does not record SELAN_VAULT=own"
 grep -qx "COMPOSE_PROFILES=''" .env || fail ".env still starts OpenBao"
 [ -z "$(docker ps -q --filter name=selan-openbao)" ] || fail "OpenBao runs beside the company's own Vault"
 for name in gw mcp keys; do ready "$name" -k || fail "$name is not ready"; done
-[ "$(ov kv get -field=value kv/selan/canary)" = not-a-key ] || fail "selan-keys did not write through the own Vault"
+ov kv put kv/selan/ci-key value=not-a-key provider=openrouter >/dev/null
+answer=$(key_read "$(saved PROXY_KEYS_TOKEN)" ci-key)
+[[ "$answer" == *'"value":"not-a-key"'*' 200' ]] || fail "selan-keys did not read through the own Vault: $answer"
 [ "$before" = "$(state)" ] || fail "install.sh changed the own Vault's policies, auth methods or AppRole"
 for component in proxy gateway; do
-  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "selan-$component-1" | grep -q '^VAULT_' &&
+  grep -q '^VAULT_' <<<"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "selan-$component-1")" &&
     fail "the $component is given a VAULT_ setting"
 done
-pass "SELAN_VAULT=own (implied by VAULT_ADDR): no OpenBao, the Vault unchanged, selan-keys reads and writes through it"
+pass "SELAN_VAULT=own (implied by VAULT_ADDR): no OpenBao, the Vault unchanged, selan-keys reads through it"
 
 hash=$(sha256sum .env)
 install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN -u SELAN_VAULT >/dev/null
