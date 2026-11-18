@@ -36,7 +36,7 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    `git ls-remote --tags --refs https://github.com/selan-ai/selan-self-hosted | sort -t/ -k3 -V | tail -n 1`).
    Print it, the full `compose.yaml`, `install.sh` and `signers.txt` at that tag
    (`https://raw.githubusercontent.com/selan-ai/selan-self-hosted/<tag>/<file>`), and what it
-   writes: `/opt/selan` (root only), Docker volumes `selan_*`, `selan-unseal.service`, and Docker
+   writes: `/opt/selan` (root only), Docker volumes `selan_*`, and Docker
    itself if missing. If `compose.yaml` still has `${SELAN_PROXY_IMAGE:?…}` (or the gateway's or
    Caddy's), that image has no release pinned yet: say so and stop. Wait for a yes.
 4. **TLS: ask which.** The names are private, so Let's Encrypt's HTTP-01 and TLS-ALPN cannot work:
@@ -79,6 +79,5 @@ never ask the person to paste it into the chat. Checking a file is `stat` and `w
    An error names the failing part; fix that part.
 8. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v` deletes the
    vault's data with every key in it: say so and wait for a yes. Then
-   `sudo systemctl disable selan-unseal`, delete `/etc/systemd/system/selan-unseal.service` and
-   `/opt/selan`, and remove the server under Settings › General › Own proxy. Deleting the VPS is the person's
+   delete `/opt/selan`, and remove the server under Settings › General › Own proxy. Deleting the VPS is the person's
    decision, in hPanel.

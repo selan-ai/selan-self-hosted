@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OpenBao on this server, registration tokens present, TLS from Caddy's own CA: install.sh brings the stack
 # up (checking OpenBao's cosign signature), it registers, only selan-keys reaches the vault, a re-run
-# changes nothing, a sealed vault after a restart is unsealed, by unseal.sh and by a re-run, and a wrong
-# signer is refused.
+# changes nothing, OpenBao restarted is unsealed by the unseal service with nobody's hands (and, with that
+# service stopped, by unseal.sh and by a re-run), and a wrong signer is refused.
 # shellcheck source=../lib.sh
 . "$(dirname "$0")/../lib.sh"
 
@@ -12,6 +12,7 @@ pass "install.sh finished, OpenBao's cosign signature checked"
 
 [ "$(mode .env)" = "root 600" ] || fail ".env is $(mode .env), not root 600"
 [ "$(mode openbao-init.json)" = "root 600" ] || fail "openbao-init.json is $(mode openbao-init.json), not root 600"
+[ "$(mode openbao-unseal.key)" = "root 600" ] || fail "openbao-unseal.key is $(mode openbao-unseal.key), not root 600"
 ! grep -q selanreg_ .env || fail "a registration token is still in .env after registering"
 [ "$(grep -cE "^(PROXY|GATEWAY)_KEYS_TOKEN='[0-9a-f]{64}'$" .env)" = 2 ] || fail ".env has no caller token for the proxy and the gateway each"
 pass ".env and openbao-init.json are root 0600, the used tokens left .env, and each caller has its own selan-keys token"
@@ -94,9 +95,19 @@ install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/dev/null
 [ "$before" = "$(sha256sum openbao-init.json .env)" ] || fail "a second run changed openbao-init.json or .env"
 pass "a second run of install.sh, without the used tokens, changes nothing and is ready again"
 
+unsealed() { # unsealed <seconds>: OpenBao answers unsealed within that long
+  for _ in $(seq "$(($1 / 2))"); do
+    compose exec -T openbao bao status >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
 compose restart openbao >/dev/null 2>&1
-compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed by itself"
-./unseal.sh
+unsealed 60 || fail "OpenBao stayed sealed after compose restart: $(compose logs --no-log-prefix unseal | tail -n 3)"
+docker restart selan-openbao-1 >/dev/null
+unsealed 60 || fail "OpenBao stayed sealed after docker restart: $(compose logs --no-log-prefix unseal | tail -n 3)"
+grep -q 'OpenBao was sealed; unsealed it.' <<<"$(compose logs --no-log-prefix unseal)" ||
+  fail "the unseal service did not say it unsealed OpenBao"
 # selan-keys first: the proxy asks whether it is ready as it starts, and then only every five minutes.
 compose restart keys >/dev/null 2>&1
 for name in keys gw mcp; do
@@ -105,15 +116,23 @@ for name in keys gw mcp; do
   ready "$name" -k || fail "$name is not ready after a restart and unseal"
 done
 [ "$(control_log | grep -c 'RegisterServer')" = 3 ] || fail "a restart registered again instead of keeping its identity"
-pass "after a restart OpenBao is sealed, unseal.sh opens it, all three are ready again and did not register again"
+pass "OpenBao restarted, by compose or by docker, is unsealed by the unseal service with nobody's hands; all three are ready again and did not register again"
+
+compose stop unseal >/dev/null 2>&1
+compose restart openbao >/dev/null 2>&1
+compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed with the unseal service stopped"
+./unseal.sh
+compose exec -T openbao bao status >/dev/null 2>&1 || fail "unseal.sh left OpenBao sealed"
+pass "with the unseal service stopped, unseal.sh opens OpenBao by hand"
 
 compose restart openbao >/dev/null 2>&1
-compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed by itself"
+compose exec -T openbao bao status >/dev/null 2>&1 && fail "OpenBao came back unsealed with the unseal service stopped"
 before=$(sha256sum .env)
 install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN >/dev/null
 compose exec -T openbao bao status >/dev/null 2>&1 || fail "a re-run of install.sh left OpenBao sealed"
 [ "$before" = "$(sha256sum .env)" ] || fail "a re-run on a sealed vault changed .env"
-pass "a re-run of install.sh on a sealed vault unseals it and changes nothing"
+[ "$(docker inspect -f '{{.State.Running}}' selan-unseal-1)" = true ] || fail "a re-run did not start the unseal service again"
+pass "a re-run of install.sh on a sealed vault unseals it, starts the unseal service again and changes nothing"
 
 old=$(grep '^KEYS_VAULT_SECRET_ID=' .env)
 install -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN KEYS_VAULT_SECRET_ID=not-a-secret-id >/dev/null
@@ -130,6 +149,12 @@ if [ "$status" = 0 ] || ! grep -q 'openbao.* is not signed by' /tmp/install.log;
   fail "install.sh did not refuse an image signed by somebody else: $(tail -n 5 /tmp/install.log)"
 fi
 pass "install.sh refuses an image whose signature names another signer than signers.txt"
+
+cp openbao-init.json /tmp/openbao-init.json
+sed -i '/"unseal_keys_b64"/,+1d' openbao-init.json
+refused 1 'no unseal key in .*openbao-init.json' -u SELAN_REGISTRATION_TOKEN -u SELAN_KEYS_REGISTRATION_TOKEN
+cp /tmp/openbao-init.json openbao-init.json
+pass "an init file without an unseal key is refused"
 
 cp openbao-init.json /tmp/openbao-init.json
 sed -i '/"root_token"/d' openbao-init.json

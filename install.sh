@@ -412,8 +412,10 @@ openbao() {
     say "Already initialised; the unseal key and root token are in $init."
   fi
   chmod 0600 "$init"
+  unseal_key "$init"
   "$DIR/unseal.sh"
-  install_unseal_unit
+  compose up -d unseal
+  retire_unseal_unit
 
   BAO_TOKEN=$(sed -n 's/^ *"root_token": *"\([^"]*\)".*/\1/p' "$init")
   [ -n "$BAO_TOKEN" ] || fail "no root token in $init"
@@ -448,23 +450,22 @@ approle() {
   printf -v "$secret_var" '%s' "$secret"
 }
 
-install_unseal_unit() {
-  [ "$DIR" = /opt/selan ] && [ -d /run/systemd/system ] || return 0
-  cat >/etc/systemd/system/selan-unseal.service <<EOF
-[Unit]
-Description=Unseal Selan's OpenBao after Docker starts it
-After=docker.service
-Requires=docker.service
+# The unseal key alone, for the `unseal` service to read: root's, mode 0600, beside openbao-init.json.
+unseal_key() {
+  local file="$DIR/openbao-unseal.key" key
+  key=$({ grep -A1 '"unseal_keys_b64"' "$1" || true; } | tail -n 1 | tr -d ' ",')
+  [[ "$key" =~ ^[A-Za-z0-9+/=]+$ ]] || fail "no unseal key in $1"
+  printf '%s\n' "$key" >"$file.tmp"
+  chmod 0600 "$file.tmp"
+  mv -f "$file.tmp" "$file"
+}
 
-[Service]
-Type=oneshot
-ExecStart=$DIR/unseal.sh
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# Before 0.2.3 a boot unit unsealed OpenBao, and nothing did after a restart; the `unseal` service does both now.
+retire_unseal_unit() {
+  [ -f /etc/systemd/system/selan-unseal.service ] || return 0
+  systemctl disable --now selan-unseal.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/selan-unseal.service
   systemctl daemon-reload
-  systemctl enable selan-unseal.service >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------- up, ready, and not public

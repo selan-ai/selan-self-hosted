@@ -24,7 +24,7 @@ or run the `git clone` half alone, read `/opt/selan`, then the `sudo` half.
 
 It needs `git` (`apt-get install -y git`) and a user that can write `/opt`: as a user that cannot, run
 `sudo install -d -o "$USER" /opt/selan` first, or run the line from a root shell. `install.sh` then makes
-`/opt/selan` root's, since root runs `unseal.sh` from it at boot.
+`/opt/selan` root's, since the unseal key and root's own scripts live in it.
 
 ## What runs where
 
@@ -49,13 +49,14 @@ allow only Selan and the providers built into their image, and selan-keys calls 
 | File | |
 |---|---|
 | [`install.sh`](install.sh) | checks Docker (installs it on Debian or Ubuntu), writes `.env`, sets up the vault, checks every image's cosign signature, starts the stack, waits for `/readyz`, checks nothing answers from the internet. Makes a selan-keys token per caller. It runs from the checkout it is in and fetches nothing else |
-| [`compose.yaml`](compose.yaml) | the six services and five networks, every image pinned by digest |
+| [`compose.yaml`](compose.yaml) | the seven services and five networks, every image pinned by digest |
 | [`compose.dns.yaml`](compose.dns.yaml) | with `SELAN_TLS=dns` only: gives Caddy a way out, to Let's Encrypt and your DNS provider |
 | [`signers.txt`](signers.txt) | who must have signed each image, checked with cosign before it runs |
 | [`Caddyfile`](Caddyfile) | TLS, and a 403 for any client outside `ALLOWED_CIDRS` |
 | [`caddy/Dockerfile`](caddy/Dockerfile) | Caddy with the DNS provider modules, built and signed by this repository's CI |
 | [`openbao.hcl`](openbao.hcl) | OpenBao's storage (files in the `selan_openbao-data` volume) and listener |
-| [`unseal.sh`](unseal.sh) | unseals OpenBao after a restart; `selan-unseal.service` runs it at boot |
+| [`unseal-watch.sh`](unseal-watch.sh) | the `unseal` service: unseals OpenBao whenever it answers sealed |
+| [`unseal.sh`](unseal.sh) | unseals OpenBao by hand, with the unseal service stopped |
 | [`.env.example`](.env.example) | every setting `install.sh` writes |
 
 ## VPN required
@@ -123,9 +124,11 @@ and with it anybody can read every key. It then turns on a KV v2 engine at `kv/`
 that allows `kv/selan/*` and nothing else, and one AppRole, `selan-keys`, with that policy; its ids go
 in `.env` and only the `keys` container gets them.
 
-OpenBao starts sealed after every restart. `selan-unseal.service` unseals it at boot with the key in
-that file. If you would rather unseal by hand, keep the file elsewhere, `systemctl disable selan-unseal`,
-and run `/opt/selan/unseal.sh` with the file put back.
+OpenBao starts sealed after every restart. The `unseal` service, beside it in the stack, unseals it
+whenever it answers sealed (after a crash, a restart, an upgrade or a reboot) with the key alone, copied
+to `/opt/selan/openbao-unseal.key` (root only, mode 0600) and mounted into that service only. If you would
+rather unseal by hand, `docker compose stop unseal`, delete `openbao-unseal.key`, and run
+`/opt/selan/unseal.sh` after each restart.
 
 **Your own Vault** (HashiCorp Vault or OpenBao): answer `own` (or set `VAULT_ADDR`), and give
 selan-keys' AppRole when asked, or in the environment, or in `/opt/selan/.env` (root, mode 0600):
@@ -242,12 +245,12 @@ every command line ran in some case and every `fail` ran as a refusal. Run the c
 
 | Case | Host | What it proves |
 |---|---|---|
-| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: every image's cosign signature checked, three registrations with their public keys (selan-keys' sealing key too) and signed polls, keys 0600 in each volume, files root 0600, selan-keys reads a key with its AppRole for the proxy's token and refuses the gateway's and a stranger's, only selan-keys reaches the vault, only the gateway its Postgres, the vault and Caddy have no way out; a re-run changes nothing; a **sealed vault** after a restart is unsealed by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data and one without a root token are refused |
+| `openbao` | Ubuntu 24.04 | OpenBao on the server, tokens present: every image's cosign signature checked, three registrations with their public keys (selan-keys' sealing key too) and signed polls, keys 0600 in each volume, files root 0600, selan-keys reads a key with its AppRole for the proxy's token and refuses the gateway's and a stranger's, only selan-keys reaches the vault, only the gateway its Postgres, the vault and Caddy have no way out; a re-run changes nothing; OpenBao **restarted** (by compose or docker) is unsealed by the unseal service with nobody's hands, and with that service stopped by `unseal.sh` and by a re-run; a secret id that stopped working is replaced; a wrong signer, a missing init file, an init file without OpenBao's data, one without an unseal key and one without a root token are refused |
 | `own-vault` | Ubuntu 24.04 | **your own Vault** (an OpenBao dev server standing in): no OpenBao runs, the Vault's policies, auth methods and AppRole are unchanged, selan-keys reads a key through it; a missing or malformed address, role id or secret id is refused; a re-run changes nothing |
 | `dns` | Ubuntu 24.04 | **DNS-01**: an unknown provider and a missing or malformed token are refused; with Caddy built from `caddy/`, Caddy gets a way out and asks the provider's API for the challenge record (CI's token is refused there, so no certificate); the token stays out of output, Caddy's log and its saved config; `install.sh` fails plainly when `/readyz` does not come |
 | `own-ca` | Ubuntu 24.04 | **your own CA**: missing paths, missing files and files that are not PEM are refused; every name answers with that CA's certificate, checked against it alone; re-runs change nothing |
 | `tokens` | Ubuntu 24.04 | a first run with a registration **token missing** or malformed is refused before anything is written; with both **present** it registers and the tokens leave `.env`; caller tokens are kept on a re-run; a broken one in `.env` is refused |
 | `outside` | Ubuntu 24.04 | at a tag `install.sh` names it; the check from outside, against stand-ins for public DNS and check-host.net: a **public address that answers is refused with exit 2**, naming only the ports that answer; closed ports, a checker that does not answer, and no public address are each said; `SELAN_OUTSIDE_CHECK=no` skips it |
 | `refusals` | Ubuntu 24.04 | every malformed or missing setting is refused, naming its variable; on a terminal every question is asked and kept, secrets unseen; a release without a codename; a VPN address found on `wg0`; non-root, a copy outside a checkout, a checkout elsewhere; unpinned and unknown images; an OpenBao and a Docker that will not start |
-| `systemd` | Ubuntu 24.04 booted by systemd | a stopped Docker started with systemctl; `selan-unseal.service` installed; after a **reboot** the stack is back and OpenBao is unsealed with nobody's hands |
+| `systemd` | Ubuntu 24.04 booted by systemd | a stopped Docker started with systemctl; the boot unit of 0.2.2 and earlier retired; after a **reboot** the stack is back and the unseal service unseals OpenBao with nobody's hands |
 | `no-debian` | Alpine | outside Debian and Ubuntu `install.sh` installs nothing and says to install curl, then Docker with the compose plugin |
