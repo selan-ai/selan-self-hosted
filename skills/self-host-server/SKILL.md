@@ -55,7 +55,8 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    (`https://raw.githubusercontent.com/selan-ai/selan-self-hosted/<tag>/<file>`), and what it writes:
    `/opt/selan` (root only), Docker volumes `selan_*`, `/usr/local/bin/selan-keys` from v0.2.5, and Docker
    itself if missing. If `compose.yaml` still has `${SELAN_PROXY_IMAGE:?…}` (or the gateway's or Caddy's),
-   that image has no release pinned yet: say so and stop. Wait for a yes.
+   that image has no release pinned yet: say so and stop. Say what each container is for (step 8's table),
+   and if their firewall limits the way out, give README's "Every host the server calls". Wait for a yes.
 6. **TLS: ask which.** The names are private, so Let's Encrypt's HTTP-01 and TLS-ALPN cannot work:
    - `SELAN_TLS=dns`: Caddy gets Let's Encrypt certificates over DNS-01 itself, renewing them too. Ask for
      the provider (bunny, cloudflare, digitalocean, duckdns, gandi, hetzner, ionos, linode or vultr) and
@@ -94,11 +95,24 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    `signed:` line per image means each cosign signature was checked.
 8. **Check it** over SSH: `sudo docker compose --project-directory /opt/selan ps` shows proxy, gateway,
    keys, postgres, caddy (and openbao, unseal) running; `stat -c '%U %a' /opt/selan/.env
-   /opt/selan/openbao-init.json` is `root 600`; `curl -sk --resolve gw.DOMAIN:443:ADDRESS
-   https://gw.DOMAIN/readyz` on the server answers 200. From this machine, off the VPN, a TCP connect to
-   the server's public IP on 443, 8080 and 8200 must fail. If anything answers publicly, say it first and
-   help close it (on Hostinger: hPanel › VPS › Firewall, or the API's firewall rules). Start the tunnel now
-   if that is the VPN.
+   /opt/selan/openbao-init.json` is `root 600`; `curl -sk --resolve NAME:443:ADDRESS https://NAME/readyz`
+   on the server answers 200 for `gw.`, `mcp.` and `keys.DOMAIN`. Each container, and when it is well:
+
+   | Container | What it is for | Well when |
+   |---|---|---|
+   | `caddy` | TLS on the VPN address, port 443, the only published port; 403 outside `ALLOWED_CIDRS` | the three `/readyz` answer through it |
+   | `proxy` | `gw.`: the endpoint developers use; reads keys from selan-keys, never the vault | `gw.` `/readyz` 200, which asks selan-keys and the vault |
+   | `gateway` | `mcp.`: the MCP connectors; their secrets through selan-keys; its sign-ins in Postgres | `mcp.` `/readyz` 200, which asks selan-keys and Selan |
+   | `postgres` | the gateway's sign-in rows, on a network with no route out | `healthy` in `ps` |
+   | `keys` | selan-keys, the only vault identity; the admin's browser adds keys at `keys.` | `keys.` `/readyz` 200; otherwise it names a sealed or silent vault |
+   | `openbao` | the vault, when they have none of their own | `… exec openbao bao status` says `Sealed false` |
+   | `unseal` | unseals OpenBao after every restart, with the key in `openbao-unseal.key` | running, with no "did not unseal it" in its log |
+
+   One that is not: `sudo docker compose --project-directory /opt/selan logs --since 10m SERVICE`. README,
+   "Services", has each one's image, callers, hosts, volume, backup and what stops without it. From this
+   machine, off the VPN, a TCP connect to the server's public IP on 443, 8080 and 8200 must fail. If anything
+   answers publicly, say it first and help close it (on Hostinger: hPanel › VPS › Firewall, or the API's
+   firewall rules). Start the tunnel now if that is the VPN.
 9. **Turn it on.** Settings › General › Own proxy shows the proxy, the keys service and the gateway Healthy. Keys
    Selan already holds (a Claude account added at onboarding, say) keep "Use my own proxy" off until they
    move: after a yes, `sudo selan-keys import` on the server (before v0.2.5,

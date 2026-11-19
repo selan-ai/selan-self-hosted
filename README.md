@@ -34,11 +34,12 @@ line's tag instead, so a new token after a failed install runs `install.sh` agai
 
 | Where | What | Talks to |
 |---|---|---|
-| Your server, `inside` and `egress` networks | `proxy`: selan-proxy, the endpoint your developers' Claude Code, Codex and Desktop use (`gw.<your domain>`) | Selan's auth and control, the providers, selan-keys |
-| Your server, `inside`, `egress` and `gateway-db` networks | `gateway`: selan-mcp-gateway, for MCP connectors (`mcp.<your domain>`) | Selan's auth and control, the connectors, selan-keys, its Postgres |
+| Your server, `inside` and `egress` networks | `proxy`: selan-proxy, the endpoint your developers' Claude Code, Codex and Desktop use (`gw.<your domain>`) | Selan's control, the providers built into its image, selan-keys |
+| Your server, `inside`, `egress` and `gateway-db` networks | `gateway`: selan-mcp-gateway, for MCP connectors (`mcp.<your domain>`) | Selan's auth, control and reactor, the connectors' services, selan-keys, its Postgres |
 | Your server, `gateway-db` only | `postgres`: the gateway's database, its sign-ins' rows (every secret itself is kept at selan-keys) | nobody: no ports, no route out |
-| Your server, `vault`, `inside` and `egress` networks | `keys`: selan-keys, the only part with a vault identity; your admins add keys in the browser at `keys.<your domain>`, which reaches only its admin API (port 8081) and `/readyz` | your vault, Selan's auth and control |
+| Your server, `vault`, `inside` and `egress` networks | `keys`: selan-keys, the only part with a vault identity; your admins add keys in the browser at `keys.<your domain>`, which reaches only its admin API (port 8081) and `/readyz` | your vault, Selan's control, the providers |
 | Your server, `vault` only | `openbao`: OpenBao, when you have no Vault of your own | nobody: no ports, no route out |
+| Your server, `vault` only | `unseal`: unseals OpenBao after every restart, with OpenBao | OpenBao alone |
 | Your server, `inside` and `front` | `caddy`: TLS for the three names on your VPN address, port 443 | the proxy, the gateway and selan-keys |
 | Selan | auth, control (who may use which key, budgets, rotation, usage), the console | nothing on your side: your server calls Selan, never the other way |
 
@@ -47,8 +48,11 @@ vault shares `vault` with selan-keys alone, so it answers nothing else: the prox
 vault address and no vault identity, and read a key from selan-keys with a token of their own that
 `install.sh` makes for each (`PROXY_KEYS_TOKEN`, `GATEWAY_KEYS_TOKEN` in `.env`). `front` publishes Caddy's port on your VPN address and has no
 NAT, so Caddy cannot reach out either, except with `SELAN_TLS=dns`, where it asks Let's Encrypt for
-certificates over your DNS provider's API. The proxy, the gateway and selan-keys are on `egress`: the proxy and gateway
-allow only Selan and the providers built into their image, and selan-keys calls Selan and your own Vault.
+certificates over your DNS provider's API. The proxy, the gateway and selan-keys are on `egress`: the proxy sends a key only to
+the providers built into its image and refuses any other origin, the gateway calls Selan and its connectors'
+services, and selan-keys calls Selan, the providers and your own Vault. [Services](#services) has each container in
+full, [Every host the server calls](#every-host-the-server-calls) the whole list, and
+[The trust boundary](#the-trust-boundary) who reaches what.
 
 | File | |
 |---|---|
@@ -63,6 +67,64 @@ allow only Selan and the providers built into their image, and selan-keys calls 
 | [`unseal.sh`](unseal.sh) | unseals OpenBao by hand, with the unseal service stopped |
 | [`selan-keys.sh`](selan-keys.sh) | `/usr/local/bin/selan-keys`, which `install.sh` installs: runs selan-keys in its container, as `sudo selan-keys import` |
 | [`.env.example`](.env.example) | every setting `install.sh` writes |
+
+## Services
+
+Every container `compose.yaml` runs, at v0.2.9. Each image is pinned by digest in `compose.yaml` at the tag, and
+`install.sh` checks its cosign signature against [`signers.txt`](signers.txt) before it pulls it.
+
+| Service | Image | What it does, and why it is a part of its own | Called by | Calls out to | Keeps | If it is down |
+|---|---|---|---|---|---|---|
+| `caddy` | `selan-public/caddy`: Caddy 2.11.9 with the DNS provider modules, built from [`caddy/Dockerfile`](caddy/Dockerfile) and signed by this repository's `caddy-image` workflow on `main` | TLS for the three names, and a 403 for any client outside `ALLOWED_CIDRS`. The only container with a port on the host, so no other part needs one, and the only one that holds certificates | your VPN, on port 443 at `SELAN_BIND_ADDR`. It sends `gw.` to `proxy:8080`, `mcp.` to `gateway:8080`, and `keys.` to `keys:8081` (`/selan/*`) and `keys:8080` (`/readyz` only) | nothing. With `SELAN_TLS=dns`: Let's Encrypt and your DNS provider's API | `caddy-data`: certificates, its ACME account and, with `internal`, its own CA. No backup needed with `dns` or `files`; with `internal`, losing it means every client trusts a new CA | nobody on the VPN reaches the proxy, the gateway or `keys.`: requests, connectors and Add key fail. The other parts still call Selan by themselves |
+| `proxy` | `selan-public/selan-proxy:0.1.1`, signed by selan-proxy's GitLab CI at a release tag | the endpoint Claude Code, Codex and Desktop use: asks control which key a request uses, reads it from selan-keys, calls the provider and reports usage. It has no vault address or vault identity, so the part every request reaches cannot read the vault | Caddy, on `8080` in `inside` | `control.selan.ai`; `keys:8080` with `PROXY_KEYS_TOKEN`; the providers built into its image, refusing any other origin before it dials | `proxy-identity`: its key pair and registration, the key that names detected secrets, and Gemini's thought signatures for a week. Back it up; lost, it registers again with a new token from Add server | developers' requests fail. With Own proxy on nothing falls back to Selan's proxy, which holds none of your keys. Selan marks it silent after five minutes |
+| `gateway` | `selan-public/selan-mcp-gateway:0.1.2`, signed by selan-mcp-gateway's GitLab CI at a release tag | Selan's MCP gateway for your connectors at `mcp.`: Selan's own tools, Slack, GitLab, GitHub, Figma and PostgreSQL. A program of its own with a database of its own; a connector's secrets stay in your vault, read through selan-keys | Caddy, on `8080` in `inside` | `control.selan.ai`, `auth.selan.ai`, `reactor.selan.ai` (the `selan` tools that reach Reactor, which do not work on an own server yet); `keys:8080` with `GATEWAY_KEYS_TOKEN`; `postgres:5432`; its connectors' services | `gateway-identity`: its key pair and registration. Back it up; lost, it registers again | connectors on your gateway fail; model requests carry on |
+| `postgres` | `docker.io/library/postgres:18.7-alpine`. Its publisher signs none, so `signers.txt` says `unsigned` and the pinned digest is the check | the gateway's database: its sign-ins' rows, each naming a key in your vault rather than holding it | the gateway alone, on `5432` in `gateway-db` | nothing: no route out | `gateway-db`; its password is `GATEWAY_DB_PASSWORD` in `.env`. Back it up | the gateway cannot read its sign-ins, so connectors fail; a gateway that is starting waits for it |
+| `keys` | `selan-public/selan-keys:0.1.5`, signed by selan-keys' GitLab CI at a release tag | selan-keys, the only part with a vault identity: an AppRole limited to `kv/selan/`. It serves keys to the proxy and the gateway by name, takes new keys from your admins' browsers, checks keys, lists models and renews accounts as control asks, and stores the keys `selan-keys import` moves. With one holder of the vault credential, the vault answers nothing else | the proxy and the gateway on `8080`, each with its own token; your admins' browsers through Caddy, which reaches only the admin API on `8081` and `/readyz` | `control.selan.ai`; the vault (`openbao:8200`, or `VAULT_ADDR`); the providers, to check keys and list models; the sign-in and renewal hosts | `keys-identity`: its signing and sealing key pairs and its registration; the keys Selan hands over are sealed to it. Back it up; lost, it registers again | the proxy and the gateway cannot read keys: requests and connectors fail once their five-minute copies run out, and Add key fails |
+| `openbao` | `quay.io/openbao/openbao:2.7.2`, signed by OpenBao's release workflow. Only without a Vault of your own (profile `openbao`) | the vault: every key, in a KV v2 engine at `kv/` | selan-keys and `unseal`, on `8200` in `vault` | nothing: no route out | `openbao-data`: every key. Back it up, with `/opt/selan/openbao-init.json` (the unseal key and root token), both off the server; see [Backups](#backups) | selan-keys cannot read the vault: requests fail once the five-minute copies run out, and Selan shows "It cannot read your vault." |
+| `unseal` | the same OpenBao image and digest, running [`unseal-watch.sh`](unseal-watch.sh) | OpenBao starts sealed after every restart. This unseals it with `/opt/selan/openbao-unseal.key` (root only), so a crash, an upgrade or a reboot does not leave you down. You may unseal by hand instead; see [The vault](#the-vault) | nobody | `openbao:8200` only | nothing; it reads the key file | nothing at once; after OpenBao's next restart it stays sealed until `/opt/selan/unseal.sh` |
+
+To see each one: `sudo docker compose --project-directory /opt/selan ps` (Postgres also says `healthy`),
+`https://gw.<domain>/readyz` (the proxy, selan-keys and the vault), `https://mcp.<domain>/readyz` (the gateway,
+selan-keys and Selan) and `https://keys.<domain>/readyz` (selan-keys and the vault), each answering 200 from your
+VPN; `sudo docker compose --project-directory /opt/selan exec openbao bao status` says `Sealed false`; and
+`sudo docker compose --project-directory /opt/selan logs --since 10m <service>` says why one is not.
+
+## Every host the server calls
+
+Nothing on the internet calls in: Caddy's port 443 is published on your VPN address alone, and no other container
+has a port on the host. Everything below is the server calling out.
+
+| Host | Who | When |
+|---|---|---|
+| `github.com` | `git` | install and upgrade: this repository at a tag |
+| your distribution's package mirrors, `download.docker.com` | `install.sh` | install, on Debian or Ubuntu, only when curl or Docker is missing |
+| `europe-docker.pkg.dev` | Docker | install and upgrade: selan-proxy, selan-mcp-gateway, selan-keys and Caddy, and their signatures |
+| `quay.io`, `docker.io`, `ghcr.io` | Docker | install and upgrade: OpenBao, Postgres, and cosign, which checks the signatures |
+| Sigstore, under `sigstore.dev` | cosign | install and upgrade: the trust root signatures are checked against |
+| `1.1.1.1`, `check-host.net` | `install.sh` | the check from outside at the end; `SELAN_OUTSIDE_CHECK=no` skips it |
+| `control.selan.ai` | proxy, gateway, selan-keys | always: sessions, leases, usage, heartbeats and key work |
+| `auth.selan.ai`, `reactor.selan.ai` | gateway | signing out a spent session; the `selan` tools that reach Reactor |
+| `api.anthropic.com`, `chatgpt.com`, `api.openai.com`, `openrouter.ai`, `api.nexos.ai`, `api.kimi.ai`, `ollama.com` | proxy, selan-keys | requests (proxy); key checks and model lists (selan-keys) |
+| `aiplatform.googleapis.com`, `aiplatform.us.rep.googleapis.com`, `aiplatform.eu.rep.googleapis.com` | proxy | Google Vertex requests |
+| `platform.claude.com`, `auth.openai.com`, `auth.kimi.ai`, `oauth2.googleapis.com` | selan-keys | account sign-ins and renewals, and Vertex access tokens |
+| `slack.com`, `gitlab.com`, `github.com`, `api.github.com`, `api.figma.com`, your PostgreSQL hosts | gateway | the connectors it serves; GitLab, GitHub and Slack sign-ins need OAuth apps of your own ([Known gaps](#known-gaps)) |
+| your own Vault | selan-keys | only with `SELAN_VAULT=own` |
+| `acme-v02.api.letsencrypt.org`, your DNS provider's API | Caddy | only with `SELAN_TLS=dns` |
+
+A registry may send image layers from other hosts of its own.
+
+## The trust boundary
+
+| Who | Reaches | Holds a key |
+|---|---|---|
+| The internet, Selan included | nothing on the server | Selan: each key's name only |
+| Your VPN: developers' tools, admins' browsers | Caddy on port 443, and through it the proxy, the gateway and selan-keys' admin API | an admin's browser, while a key is typed |
+| The proxy, the gateway | selan-keys with their own tokens, Selan, the providers or the connectors' services | a key read for a request, for up to five minutes |
+| selan-keys | the vault, Selan, the providers' check and sign-in hosts | each key as it reads or writes it |
+| The vault: OpenBao or yours | nothing | every key, at rest |
+
+A key leaves the vault only through selan-keys, to the proxy or the gateway, which send it only to its provider or
+its connector's service.
 
 ## VPN required
 
