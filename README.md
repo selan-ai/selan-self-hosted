@@ -247,6 +247,22 @@ cosign verify --certificate-identity-regexp '<identity from signers.txt>' \
   --certificate-oidc-issuer '<issuer from signers.txt>' <image>@sha256:…
 ```
 
+## Use the API
+
+From a machine on your VPN, with a company API token from Settings › API tokens sent as `Authorization: Bearer`:
+
+| Path | For |
+|---|---|
+| `POST https://gw.<domain>/v1/messages` | Anthropic-shaped clients |
+| `POST https://gw.<domain>/openai/v1/responses` | OpenAI-shaped clients; always with `"stream": true` |
+| `GET /v1/models`, `GET /openai/v1/models` | the models your company may use |
+
+A model id is one `/v1/models` lists: a bare Claude id such as `claude-haiku-5-5`, or
+`claude-selan-<provider>-<model>` for another provider's, such as `claude-selan-openai-gpt-6-2-sol`. Claude Code takes
+`ANTHROPIC_BASE_URL=https://gw.<domain>` and `ANTHROPIC_AUTH_TOKEN`. Developers run `selan login` into the company and
+`selan claude`; it reaches your proxy by itself. Examples, and Codex:
+[selan.ai/docs/self-hosted#api](https://selan.ai/docs/self-hosted#api).
+
 ## Known gaps
 
 - **MCP clients that sign in through Selan** (Claude Desktop, claude.ai) get a 401 from your gateway: it looks
