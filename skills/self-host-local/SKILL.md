@@ -32,5 +32,5 @@ The same steps for people are https://selan.ai/docs/self-hosted.
    `curl -sk --resolve gw.example.localhost:443:127.0.0.1 https://gw.example.localhost/readyz` answers 200.
 5. **Turning it on (its step 9)** sends the whole company's requests to this machine: on a laptop, only
    for a trial company or a company of one.
-6. **The request (its step 11)** runs on this machine, to `https://gw.example.localhost/v1/messages`,
+6. **The request (its step 11)** runs on this machine, to `https://gw.example.localhost/anthropic/v1/messages`,
    with `-k` under `internal`.
