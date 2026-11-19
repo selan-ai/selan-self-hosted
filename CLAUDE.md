@@ -1,6 +1,6 @@
 # selan-self-hosted
 
-Public install for Selan's Own servers: a company's own proxy, MCP gateway, selan-keys and vault, inside its VPN.
+Public install for Selan's Own proxy: a company's own proxy, MCP gateway, selan-keys and vault, inside its VPN.
 `README.md` is the contract; `docs/design/self-hosted-secrets.md` in selan-control is the design.
 
 ## Rules

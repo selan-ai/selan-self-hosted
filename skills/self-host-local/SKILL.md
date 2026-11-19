@@ -9,7 +9,8 @@ allowed-tools: Bash Read WebFetch
 The same stack and the same `install.sh` as on a server, so this skill follows the **self-host-server**
 skill (`../self-host-server/SKILL.md`, beside this one). Read it first and keep its rules: Claude never
 sees a registration token, `.env`, `openbao-init.json` or a private key, and the person runs the line.
-Its steps 5 to 13, upgrade included, hold here, run locally instead of over SSH, with these differences:
+Its steps 5 to 13, upgrade included, hold here, run locally instead of over SSH, with these differences.
+The same steps for people are https://selan.ai/docs/self-hosted.
 
 1. **Instead of its steps 1 to 4.** `docker compose version` must work (Docker Desktop on macOS, Docker
    Engine with the compose plugin on Linux; `install.sh` installs it only on Debian or Ubuntu), and nothing
