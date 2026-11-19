@@ -71,7 +71,8 @@ full, [Every host the server calls](#every-host-the-server-calls) the whole list
 ## Services
 
 Every container `compose.yaml` runs, at v0.2.9. Each image is pinned by digest in `compose.yaml` at the tag, and
-`install.sh` checks its cosign signature against [`signers.txt`](signers.txt) before it pulls it.
+`install.sh` checks the cosign signature of every signed image against [`signers.txt`](signers.txt) before it pulls
+it. Postgres, whose publisher signs none, runs by its digest alone.
 
 | Service | Image | What it does, and why it is a part of its own | Called by | Calls out to | Keeps | If it is down |
 |---|---|---|---|---|---|---|
@@ -91,8 +92,8 @@ VPN; `sudo docker compose --project-directory /opt/selan exec openbao bao status
 
 ## Every host the server calls
 
-Nothing on the internet calls in to these containers: Caddy's port 443 is published on your VPN address alone, and
-no other container has a port on the host. Your VPN may need a port of its own, such as WireGuard's UDP 51820.
+Nothing on the internet calls in to these containers: Caddy's port 443 is published on your VPN address alone (on
+`127.0.0.1` with an SSH tunnel), and no other container has a port on the host. Your VPN may need a port of its own, such as WireGuard's UDP 51820.
 Everything below is the server calling out.
 
 | Who | Hosts | When |
