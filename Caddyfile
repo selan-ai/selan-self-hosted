@@ -33,7 +33,15 @@
 {$SELAN_PROXY_HOST} {
 	import tls-{$SELAN_TLS}
 	import only-allowed
-	reverse_proxy proxy:8080
+	# Every proxy instance by its own address, so `--scale proxy=N` spreads requests: a static `proxy:8080` keeps
+	# reusing its pooled connection to whichever instance it dialed first, and the others serve nothing.
+	reverse_proxy {
+		dynamic a proxy 8080 {
+			refresh 5s
+		}
+		lb_policy round_robin
+		lb_try_duration 5s
+	}
 }
 
 {$SELAN_GATEWAY_HOST} {
