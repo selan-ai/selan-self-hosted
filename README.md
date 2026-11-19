@@ -91,8 +91,9 @@ VPN; `sudo docker compose --project-directory /opt/selan exec openbao bao status
 
 ## Every host the server calls
 
-Nothing on the internet calls in: Caddy's port 443 is published on your VPN address alone, and no other container
-has a port on the host. Everything below is the server calling out.
+Nothing on the internet calls in to these containers: Caddy's port 443 is published on your VPN address alone, and
+no other container has a port on the host. Your VPN may need a port of its own, such as WireGuard's UDP 51820.
+Everything below is the server calling out.
 
 | Who | Hosts | When |
 |---|---|---|
@@ -117,14 +118,14 @@ A registry may send image layers from other hosts of its own.
 
 | Who | Reaches | Holds a key |
 |---|---|---|
-| The internet, Selan included | nothing on the server | Selan: each key's name only |
+| The internet, Selan included | nothing on the server | Selan: each key's name, once `selan-keys import` has moved the keys it held |
 | Your VPN: developers' tools, admins' browsers | Caddy on port 443, and through it the proxy, the gateway and selan-keys' admin API | an admin's browser, while a key is typed |
 | The proxy, the gateway | selan-keys with their own tokens, Selan, the providers or the connectors' services | a key read for a request, for up to five minutes |
 | selan-keys | the vault, Selan, the providers' check and sign-in hosts | each key as it reads or writes it |
 | The vault: OpenBao or yours | nothing | every key, at rest |
 
-A key leaves the vault only through selan-keys, to the proxy or the gateway, which send it only to its provider or
-its connector's service.
+A key leaves the vault only through selan-keys, which sends it to its provider to check or renew it, or to the proxy
+or the gateway, which send it only to its provider or its connector's service.
 
 ## VPN required
 
