@@ -3,6 +3,10 @@
 [Selan](https://selan.ai)'s proxy, MCP gateway and selan-keys on your own server, inside your VPN,
 with every provider key in your own vault. This is what **Settings › General › Own proxy** in Selan installs.
 
+The guide for people, without the detail below, is [selan.ai/docs/self-hosted](https://selan.ai/docs/self-hosted).
+A release is a [tag](https://github.com/selan-ai/selan-self-hosted/tags) of this repository. To have Claude Code do
+the install with you, see [With Claude Code](#with-claude-code).
+
 **Installing, and every upgrade, runs code Selan wrote, as root on your server**: `install.sh` and the
 images it starts. What protects you is not trust in Selan at that moment but this: the code comes from a
 release tag of this public repository that you choose, you can read all of it before it runs, and
@@ -63,13 +67,14 @@ allow only Selan and the providers built into their image, and selan-keys calls 
 ## VPN required
 
 The proxy and the gateway are for your people only, so they listen on your VPN address and nowhere
-else. Setting up the VPN (Tailscale, WireGuard, your company's own) is yours. `install.sh` refuses a
-public listen address, and finds one on a `tailscale*`, `wg*`, `tun*`, `zt*` or `nebula*` interface
-when you do not give `SELAN_BIND_ADDR`. Point `gw.<your domain>` and `mcp.<your domain>` at that
-address in the DNS your people use, not in public DNS.
+else. Setting up the VPN is yours: Tailscale or WireGuard for a team, your company's own, or an SSH tunnel
+with `SELAN_BIND_ADDR=127.0.0.1` for one person trying it. The `self-host-server` skill sets up any of them
+with you. `install.sh` refuses a public listen address, and finds one on a `tailscale*`, `wg*`, `tun*`, `zt*`
+or `nebula*` interface when you do not give `SELAN_BIND_ADDR`. Point `gw.`, `mcp.` and `keys.<your domain>`
+at that address in the DNS your people use, not in public DNS.
 
 At the end, `install.sh` asks [check-host.net](https://check-host.net) to connect from three
-places on the internet to this server's public address, and to whatever public DNS gives for your two
+places on the internet to this server's public address, and to whatever public DNS gives for your three
 names, on ports 443, 80, 8080 and 8200. If any of them answers it says so plainly and exits 2. That
 sends your server's public address to check-host.net; `SELAN_OUTSIDE_CHECK=no` skips it.
 
@@ -159,8 +164,10 @@ sudo git -C /opt/selan diff HEAD <new tag>
 sudo git -C /opt/selan -c advice.detachedHead=false checkout <new tag> && sudo /opt/selan/install.sh
 ```
 
-The token is not needed again. To stay where you are, do nothing. Settings › General › Own proxy says when your
-version is older than Selan supports.
+The token is not needed again. Running Add server's line again does the same: it moves `/opt/selan` to the tag
+the line names and runs `install.sh` with the settings in `.env`, and parts already registered ignore its token.
+To stay where you are, do nothing. Settings › General › Own proxy says when your version is older than Selan
+supports.
 
 Each image is pinned in `compose.yaml` by digest, by a pull request here, so Selan cannot change what
 your server runs without a new tag. Before running a digest, `install.sh` checks its cosign signature
@@ -227,8 +234,17 @@ This repository is also a Claude Code plugin:
 
 | Skill | Where it runs the stack |
 |---|---|
-| `self-host-local` | this machine, with Docker |
-| `self-host-server` | a server of yours over SSH, such as a Hostinger VPS found through the Hostinger MCP server: the VPN, DNS and TLS with it, then moving keys, turning it on and upgrades |
+| [`self-host-server`](skills/self-host-server) | a server of yours over SSH, a Hostinger VPS (found through the Hostinger MCP server or API) or any Debian or Ubuntu host: the VPN (Tailscale, WireGuard or an SSH tunnel), DNS and TLS with it, then moving keys, turning it on, upgrades and removing it |
+| [`self-host-local`](skills/self-host-local) | this machine, with Docker; it follows `self-host-server` with this machine's differences |
+
+Without the plugin, put both skill folders in `~/.claude/skills`, by link or by copy:
+
+```sh
+git clone https://github.com/selan-ai/selan-self-hosted ~/selan-self-hosted
+mkdir -p ~/.claude/skills
+ln -s ~/selan-self-hosted/skills/self-host-server ~/.claude/skills/self-host-server
+ln -s ~/selan-self-hosted/skills/self-host-local ~/.claude/skills/self-host-local
+```
 
 Both show the tag, `compose.yaml` and `install.sh` first, ask which TLS to use, and have you run the line with the tokens yourself:
 Claude never sees a token or the vault's material. They finish with one real request through the

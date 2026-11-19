@@ -11,6 +11,7 @@ nothing rewritten and nothing served by Selan. Installing and every upgrade run 
 plainly, and that the protection is that they choose the tag and can read it first. Inputs: the host (or
 a Hostinger VPS to find), an SSH user with sudo, and the company's domain. The names are `gw.<domain>`
 (proxy), `mcp.<domain>` (gateway) and `keys.<domain>` (selan-keys) unless the person says otherwise.
+The same steps for people are https://selan.ai/docs/self-hosted; the full detail is the repository's README.
 
 **Claude never sees a registration token, the DNS token or the vault's material.** Never `cat`, `grep` or
 copy `/opt/selan/.env`, `/opt/selan/openbao-init.json` or a TLS private key, never run a command that
@@ -75,11 +76,11 @@ carries a token, and never ask the person to paste one into the chat. Checking a
      renew itself: see step 11.
    - `SELAN_TLS=files` with **their own CA**: a certificate for the three names, copied onto the server.
      Their people's machines must trust that CA.
-7. **The person runs the install.** The line is in Selan under Settings › Own proxy › Add server, for
-   owners; a new company can press "Skip: I'll run Selan on my own servers" at the bottom of onboarding,
-   which goes straight there. Its token lasts an hour, so they press it only now. In their own terminal
-   and SSH session, the settings first, then the line as copied, with every exported setting added to
-   `--preserve-env`, or sudo drops it:
+7. **The person runs the install.** The line is in Selan under Settings › General › Own proxy, Configure,
+   then Add server, for owners; a new company can press "Skip: I'll run Selan on my own servers" at the
+   bottom of onboarding, which goes straight there. Its token lasts an hour, so they press it only now. In
+   their own terminal and SSH session, the settings first, then the line as copied, with every exported
+   setting added to `--preserve-env`, or sudo drops it:
    ```sh
    ssh -t USER@HOST
    export SELAN_PROXY_HOST=gw.DOMAIN SELAN_BIND_ADDR=ADDRESS SELAN_TLS=files SELAN_TLS_CERT=PATH SELAN_TLS_KEY=PATH SELAN_VAULT=openbao
@@ -98,7 +99,7 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    the server's public IP on 443, 8080 and 8200 must fail. If anything answers publicly, say it first and
    help close it (on Hostinger: hPanel › VPS › Firewall, or the API's firewall rules). Start the tunnel now
    if that is the VPN.
-9. **Turn it on.** Settings › Own proxy shows the proxy, the keys service and the gateway Healthy. Keys
+9. **Turn it on.** Settings › General › Own proxy shows the proxy, the keys service and the gateway Healthy. Keys
    Selan already holds (a Claude account added at onboarding, say) keep "Use my own proxy" off until they
    move: after a yes, `sudo selan-keys import` on the server (before v0.2.5,
    `sudo docker compose --project-directory /opt/selan exec -T keys selan-keys import`), which opens ten
@@ -122,8 +123,8 @@ carries a token, and never ask the person to paste one into the chat. Checking a
     /opt/selan/certs/privkey.pem && sudo docker compose --project-directory /opt/selan restart caddy`.
     Suggest a reminder at 60 days.
 12. **Upgrade.** New code Selan wrote again, from a tag they choose: say so.
-    - Where it is: `sudo git -C /opt/selan describe --tags`, and each part's version in Settings › Own
-      proxy. Where to go: the tag Add server's line names now (step 5).
+    - Where it is: `sudo git -C /opt/selan describe --tags`, and each part's version in Settings › General ›
+      Own proxy. Where to go: the tag Add server's line names now (step 5).
     - Show what changes and wait for a yes: `sudo git -C /opt/selan fetch -q --depth 1 origin tag NEW &&
       sudo git -C /opt/selan diff HEAD NEW -- compose.yaml install.sh signers.txt`.
     - The person runs Add server's line again: it checks out the new tag in `/opt/selan`, and `install.sh`
@@ -136,4 +137,4 @@ carries a token, and never ask the person to paste one into the chat. Checking a
 13. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v` deletes
     the vault's data with every key in it: say so and wait for a yes. Then delete `/opt/selan` and
     `/usr/local/bin/selan-keys`, stop a tunnel (`sudo pkill -f 443:127.0.0.1:443`), and remove the server
-    under Settings › Own proxy. Deleting the VPS is the person's decision, in hPanel.
+    under Settings › General › Own proxy. Deleting the VPS is the person's decision, in hPanel.
