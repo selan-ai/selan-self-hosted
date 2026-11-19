@@ -17,6 +17,10 @@ The same steps for people are https://selan.ai/docs/self-hosted; the full detail
 copy `/opt/selan/.env`, `/opt/selan/openbao-init.json` or a TLS private key, never run a command that
 carries a token, and never ask the person to paste one into the chat. Checking a file is `stat` and `wc -c`.
 
+0. **A Selan company first.** With none yet, the owner signs up at https://auth.selan.ai/r ("Create a
+   workspace": continue with Google or Microsoft on their work email). At the bottom of onboarding they press
+   "Skip: I'll run Selan on my own servers", which opens Settings › General › Own proxy at Add server. They
+   press Add server only at step 7: its token lasts an hour.
 1. **Find the server.** Given a host, use it. For a Hostinger VPS with the Hostinger MCP server
    connected (authenticate it if it asks), list the virtual machines and show each one's id, hostname,
    plan, state and IP. Without it, `GET https://developers.hostinger.com/api/vps/v1/virtual-machines`
@@ -55,7 +59,8 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    (`https://raw.githubusercontent.com/selan-ai/selan-self-hosted/<tag>/<file>`), and what it writes:
    `/opt/selan` (root only), Docker volumes `selan_*`, `/usr/local/bin/selan-keys` from v0.2.5, and Docker
    itself if missing. If `compose.yaml` still has `${SELAN_PROXY_IMAGE:?…}` (or the gateway's or Caddy's),
-   that image has no release pinned yet: say so and stop. Wait for a yes.
+   that image has no release pinned yet: say so and stop. Say what each container is for (step 8's table),
+   and if their firewall limits the way out, give README's "Every host the server calls". Wait for a yes.
 6. **TLS: ask which.** The names are private, so Let's Encrypt's HTTP-01 and TLS-ALPN cannot work:
    - `SELAN_TLS=dns`: Caddy gets Let's Encrypt certificates over DNS-01 itself, renewing them too. Ask for
      the provider (bunny, cloudflare, digitalocean, duckdns, gandi, hetzner, ionos, linode or vultr) and
@@ -73,7 +78,7 @@ carries a token, and never ask the person to paste one into the chat. Checking a
      above, `type=TXT`), then the same command with `--renew` in place of `--issue` gets the certificate.
      `SELAN_TLS_CERT` and `SELAN_TLS_KEY` are the full chain and key paths it prints
      (`/root/.acme.sh/gw.DOMAIN_ecc/fullchain.cer` and `gw.DOMAIN.key`). It lasts 90 days and does not
-     renew itself: see step 11.
+     renew itself: see step 12.
    - `SELAN_TLS=files` with **their own CA**: a certificate for the three names, copied onto the server.
      Their people's machines must trust that CA.
 7. **The person runs the install.** The line is in Selan under Settings › General › Own proxy, Configure,
@@ -94,11 +99,24 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    `signed:` line per image means each cosign signature was checked.
 8. **Check it** over SSH: `sudo docker compose --project-directory /opt/selan ps` shows proxy, gateway,
    keys, postgres, caddy (and openbao, unseal) running; `stat -c '%U %a' /opt/selan/.env
-   /opt/selan/openbao-init.json` is `root 600`; `curl -sk --resolve gw.DOMAIN:443:ADDRESS
-   https://gw.DOMAIN/readyz` on the server answers 200. From this machine, off the VPN, a TCP connect to
-   the server's public IP on 443, 8080 and 8200 must fail. If anything answers publicly, say it first and
-   help close it (on Hostinger: hPanel › VPS › Firewall, or the API's firewall rules). Start the tunnel now
-   if that is the VPN.
+   /opt/selan/openbao-init.json` is `root 600`; `curl -sk --resolve NAME:443:ADDRESS https://NAME/readyz`
+   on the server answers 200 for `gw.`, `mcp.` and `keys.DOMAIN`. Each container, and when it is well:
+
+   | Container | What it is for | Well when |
+   |---|---|---|
+   | `caddy` | TLS on the VPN address, port 443, the only published port; 403 outside `ALLOWED_CIDRS` | the three `/readyz` answer through it |
+   | `proxy` | `gw.`: the endpoint developers use; reads keys from selan-keys, never the vault | `gw.` `/readyz` 200, which asks selan-keys and the vault |
+   | `gateway` | `mcp.`: the MCP connectors; their secrets through selan-keys; its sign-ins in Postgres | `mcp.` `/readyz` 200, which asks selan-keys and Selan |
+   | `postgres` | the gateway's sign-in rows, on a network with no route out | `healthy` in `ps` |
+   | `keys` | selan-keys, the only vault identity; the admin's browser adds keys at `keys.` | `keys.` `/readyz` 200; otherwise it names a sealed or silent vault |
+   | `openbao` | the vault, when they have none of their own | `… exec openbao bao status` says `Sealed false` |
+   | `unseal` | unseals OpenBao after every restart, with the key in `openbao-unseal.key` | running, with no "did not unseal it" in its log |
+
+   One that is not: `sudo docker compose --project-directory /opt/selan logs --since 10m SERVICE`. README,
+   "Services", has each one's image, callers, hosts, volume, backup and what stops without it. From this
+   machine, off the VPN, a TCP connect to the server's public IP on 443, 8080 and 8200 must fail. If anything
+   answers publicly, say it first and help close it (on Hostinger: hPanel › VPS › Firewall, or the API's
+   firewall rules). Start the tunnel now if that is the VPN.
 9. **Turn it on.** Settings › General › Own proxy shows the proxy, the keys service and the gateway Healthy. Keys
    Selan already holds (a Claude account added at onboarding, say) keep "Use my own proxy" off until they
    move: after a yes, `sudo selan-keys import` on the server (before v0.2.5,
@@ -106,7 +124,11 @@ carries a token, and never ask the person to paste one into the chat. Checking a
    minutes for Selan to hand each key over, sealed to that server. A key it cannot move, such as Google
    Workspace or Vertex, is removed first, as the dialog says; afterwards the person changes each moved key
    at its provider. Then they turn on "Use my own proxy".
-10. **One real request**, from a machine on the VPN (or through the tunnel), run by the person with a
+10. **Keys and people.** New keys: Tokens › Add token, from a browser on the VPN; it sends each key straight
+    to their selan-keys, never to Selan. People: Members › Invite by email. Each developer installs the selan
+    CLI (`curl -fsSL https://dl.selan.ai/install.sh | sh`, as https://selan.ai/docs says) and runs
+    `selan login` into that company.
+11. **One real request**, from a machine on the VPN (or through the tunnel), run by the person with a
     company API token from Settings › API tokens (`-k` only with `SELAN_TLS=internal`):
     ```sh
     read -rs T && printf 'Authorization: Bearer %s\n' "$T" | curl -sS https://gw.DOMAIN/v1/messages \
@@ -116,13 +138,13 @@ carries a token, and never ask the person to paste one into the chat. Checking a
     An answer with `"content"` is the proof. Then Logs and Usage in Selan show the request, and
     `sudo docker compose --project-directory /opt/selan logs --since 10m keys` shows `outcome: served` with
     the key's name. An error names the failing part; fix that part, never by reading the vault's files.
-11. **Day to day.** People on the VPN use Selan as before: `selan login` into that company, or an API token
+12. **Day to day.** People on the VPN use Selan as before: `selan login` into that company, or an API token
     as `SELAN_TOKEN=… selan claude`. A certificate by hand is renewed before its 90 days: `--renew` prints
     new TXT values, they go into DNS, `--renew` again, then
     `sudo install -m 0644 FULLCHAIN /opt/selan/certs/fullchain.pem && sudo install -m 0600 KEY
     /opt/selan/certs/privkey.pem && sudo docker compose --project-directory /opt/selan restart caddy`.
     Suggest a reminder at 60 days.
-12. **Upgrade.** New code Selan wrote again, from a tag they choose: say so.
+13. **Upgrade.** New code Selan wrote again, from a tag they choose: say so.
     - Where it is: `sudo git -C /opt/selan describe --tags`, and each part's version in Settings › General ›
       Own proxy. Where to go: the tag Add server's line names now (step 5).
     - Show what changes and wait for a yes: `sudo git -C /opt/selan fetch -q --depth 1 origin tag NEW &&
@@ -131,10 +153,10 @@ carries a token, and never ask the person to paste one into the chat. Checking a
       keeps `.env`, checks each image's signature again and starts the new images; parts already
       registered ignore the new token. Or, with no token: `sudo git -C /opt/selan checkout -q NEW &&
       sudo /opt/selan/install.sh`. Either way the settings come from `.env`; none is exported again.
-    - Then step 8's checks, the three parts Healthy on the new version, and step 10's request and
-      `outcome: served`. A certificate by hand still needs step 11's renewal.
+    - Then step 8's checks, the three parts Healthy on the new version, and step 11's request and
+      `outcome: served`. A certificate by hand still needs step 12's renewal.
     - Back: the same with the old tag, fetched first (the clone is shallow).
-13. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v` deletes
+14. **Remove it.** `sudo docker compose --project-directory /opt/selan --profile openbao down -v` deletes
     the vault's data with every key in it: say so and wait for a yes. Then delete `/opt/selan` and
     `/usr/local/bin/selan-keys`, stop a tunnel (`sudo pkill -f 443:127.0.0.1:443`), and remove the server
     under Settings › General › Own proxy. Deleting the VPS is the person's decision, in hPanel.
