@@ -253,13 +253,13 @@ From a machine on your VPN, with a company API token from Settings › API token
 
 | Path | For |
 |---|---|
-| `POST https://gw.<domain>/v1/messages` | Anthropic-shaped clients |
+| `POST https://gw.<domain>/anthropic/v1/messages` | Anthropic-shaped clients |
 | `POST https://gw.<domain>/openai/v1/responses` | OpenAI-shaped clients; always with `"stream": true` |
-| `GET /v1/models`, `GET /openai/v1/models` | the models your company may use |
+| `GET /anthropic/v1/models`, `GET /openai/v1/models` | the models your company may use |
 
-A model id is one `/v1/models` lists: a bare Claude id such as `claude-haiku-5-5`, or
+A model id is one `/anthropic/v1/models` lists: a bare Claude id such as `claude-haiku-5-5`, or
 `claude-selan-<provider>-<model>` for another provider's, such as `claude-selan-openai-gpt-6-2-sol`. Claude Code takes
-`ANTHROPIC_BASE_URL=https://gw.<domain>` and `ANTHROPIC_AUTH_TOKEN`. Developers run `selan login` into the company and
+`ANTHROPIC_BASE_URL=https://gw.<domain>/anthropic` and `ANTHROPIC_AUTH_TOKEN`. Developers run `selan login` into the company and
 `selan claude`; it reaches your proxy by itself. Examples, and Codex:
 [selan.ai/docs/self-hosted#api](https://selan.ai/docs/self-hosted#api).
 
