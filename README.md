@@ -94,22 +94,22 @@ VPN; `sudo docker compose --project-directory /opt/selan exec openbao bao status
 Nothing on the internet calls in: Caddy's port 443 is published on your VPN address alone, and no other container
 has a port on the host. Everything below is the server calling out.
 
-| Host | Who | When |
+| Who | Hosts | When |
 |---|---|---|
-| `github.com` | `git` | install and upgrade: this repository at a tag |
-| your distribution's package mirrors, `download.docker.com` | `install.sh` | install, on Debian or Ubuntu, only when curl or Docker is missing |
-| `europe-docker.pkg.dev` | Docker | install and upgrade: selan-proxy, selan-mcp-gateway, selan-keys and Caddy, and their signatures |
-| `quay.io`, `docker.io`, `ghcr.io` | Docker | install and upgrade: OpenBao, Postgres, and cosign, which checks the signatures |
-| Sigstore, under `sigstore.dev` | cosign | install and upgrade: the trust root signatures are checked against |
-| `1.1.1.1`, `check-host.net` | `install.sh` | the check from outside at the end; `SELAN_OUTSIDE_CHECK=no` skips it |
-| `control.selan.ai` | proxy, gateway, selan-keys | always: sessions, leases, usage, heartbeats and key work |
-| `auth.selan.ai`, `reactor.selan.ai` | gateway | signing out a spent session; the `selan` tools that reach Reactor |
-| `api.anthropic.com`, `chatgpt.com`, `api.openai.com`, `openrouter.ai`, `api.nexos.ai`, `api.kimi.ai`, `ollama.com` | proxy, selan-keys | requests (proxy); key checks and model lists (selan-keys) |
-| `aiplatform.googleapis.com`, `aiplatform.us.rep.googleapis.com`, `aiplatform.eu.rep.googleapis.com` | proxy | Google Vertex requests |
-| `platform.claude.com`, `auth.openai.com`, `auth.kimi.ai`, `oauth2.googleapis.com` | selan-keys | account sign-ins and renewals, and Vertex access tokens |
-| `slack.com`, `gitlab.com`, `github.com`, `api.github.com`, `api.figma.com`, your PostgreSQL hosts | gateway | the connectors it serves; GitLab, GitHub and Slack sign-ins need OAuth apps of your own ([Known gaps](#known-gaps)) |
-| your own Vault | selan-keys | only with `SELAN_VAULT=own` |
-| `acme-v02.api.letsencrypt.org`, your DNS provider's API | Caddy | only with `SELAN_TLS=dns` |
+| `git` | `github.com` | install and upgrade: this repository at a tag |
+| `install.sh` | your distribution's package mirrors, `download.docker.com` | install, on Debian or Ubuntu, only when curl or Docker is missing |
+| Docker | `europe-docker.pkg.dev` | install and upgrade: selan-proxy, selan-mcp-gateway, selan-keys and Caddy, and their signatures |
+| Docker | `quay.io`, `docker.io`, `ghcr.io` | install and upgrade: OpenBao, Postgres, and cosign, which checks the signatures |
+| cosign | Sigstore, under `sigstore.dev` | install and upgrade: the trust root signatures are checked against |
+| `install.sh` | `1.1.1.1`, `check-host.net` | the check from outside at the end; `SELAN_OUTSIDE_CHECK=no` skips it |
+| proxy, gateway, selan-keys | `control.selan.ai` | always: sessions, leases, usage, heartbeats and key work |
+| gateway | `auth.selan.ai`, `reactor.selan.ai` | signing out a spent session; the `selan` tools that reach Reactor |
+| proxy, selan-keys | `api.anthropic.com`, `chatgpt.com`, `api.openai.com`, `openrouter.ai`, `api.nexos.ai`, `api.kimi.ai`, `ollama.com` | requests (proxy); key checks and model lists (selan-keys) |
+| proxy | `aiplatform.googleapis.com`, `aiplatform.us.rep.googleapis.com`, `aiplatform.eu.rep.googleapis.com` | Google Vertex requests |
+| selan-keys | `platform.claude.com`, `auth.openai.com`, `auth.kimi.ai`, `oauth2.googleapis.com` | account sign-ins and renewals, and Vertex access tokens |
+| gateway | `slack.com`, `gitlab.com`, `github.com`, `api.github.com`, `api.figma.com`, your PostgreSQL hosts | the connectors it serves; GitLab, GitHub and Slack sign-ins need OAuth apps of your own ([Known gaps](#known-gaps)) |
+| selan-keys | your own Vault | only with `SELAN_VAULT=own` |
+| Caddy | `acme-v02.api.letsencrypt.org`, your DNS provider's API | only with `SELAN_TLS=dns` |
 
 A registry may send image layers from other hosts of its own.
 
