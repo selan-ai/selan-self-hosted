@@ -131,7 +131,7 @@ carries a token, and never ask the person to paste one into the chat. Checking a
 11. **One real request**, from a machine on the VPN (or through the tunnel), run by the person with a
     company API token from Settings › API tokens (`-k` only with `SELAN_TLS=internal`):
     ```sh
-    read -rs T && printf 'Authorization: Bearer %s\n' "$T" | curl -sS https://gw.DOMAIN/v1/messages \
+    read -rs T && printf 'Authorization: Bearer %s\n' "$T" | curl -sS https://gw.DOMAIN/anthropic/v1/messages \
       -H @- -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' \
       -d '{"model":"claude-haiku-5-5","max_tokens":20,"messages":[{"role":"user","content":"Reply with ok"}]}'; unset T
     ```
